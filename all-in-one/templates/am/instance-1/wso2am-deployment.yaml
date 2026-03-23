@@ -67,6 +67,10 @@ spec:
       imagePullSecrets:
       - name: {{ template "am-all-in-one.fullname" . }}-docker-registry-auth
       {{- end }}
+      {{- if .Values.kubernetes.initContainers }}
+      initContainers:
+        {{- toYaml .Values.kubernetes.initContainers | nindent 8 }}
+      {{- end }}
       containers:
         - name: wso2am
           image: {{ .Values.wso2.deployment.image.registry }}/{{ .Values.wso2.deployment.image.repository }}@{{ .Values.wso2.deployment.image.digest }}
