@@ -79,7 +79,6 @@ wso2:
         serviceUrl: "wso2am-cp-service"
         urls:
           - "wso2am-cp-1-service"
-          - "wso2am-cp-2-service"
 
   deployment:
     highAvailability: false

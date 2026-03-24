@@ -87,7 +87,6 @@ wso2:
         servicePort: 9443
         urls:
           - "wso2am-cp-1-service"
-          - "wso2am-cp-2-service"
         portOffset: 0
       eventhub:
         enabled: true
@@ -95,7 +94,6 @@ wso2:
         servicePort: 9443
         urls:
           - "wso2am-cp-1-service"
-          - "wso2am-cp-2-service"
 
   deployment:
     replicas: 1
