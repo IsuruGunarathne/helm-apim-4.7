@@ -1,4 +1,4 @@
-# Distributed Deployment — WSO2 API Manager 4.7 (Multi-DC Pattern 1)
+# Local Distributed Deployment — WSO2 API Manager 4.7 (Multi-DC Pattern 1)
 
 Deploy WSO2 APIM 4.7 in distributed mode on a local Kubernetes cluster with PostgreSQL, following the [Multi-DC Pattern 1](https://apim.docs.wso2.com/en/latest/install-and-setup/setup/multi-dc-deployment/configuring-multi-dc-deployment-pattern-1/) architecture.
 
@@ -12,15 +12,15 @@ Deploy WSO2 APIM 4.7 in distributed mode on a local Kubernetes cluster with Post
                            │          │
          ┌─────────────────┼──────────┼─────────────────┐
          │                 │          │                  │
-   ┌─────┴──────┐   ┌─────┴──────┐   │   ┌─────────────┴──┐
-   │ Control    │   │ Control    │   │   │ Traffic        │
-   │ Plane #1   │   │ Plane #2   │   │   │ Manager #1/#2  │
-   │ +KM embed  │   │ +KM embed  │   │   │                │
-   └─────┬──────┘   └─────┬──────┘   │   └───────┬────────┘
-         │  LB: wso2am-cp-service     │           │
-         └────────────┬───────────────┘           │
-                      │                           │
-               ┌──────┴───────────────────────────┘
+   ┌─────┴──────┐         │          │   ┌─────────────┴──┐
+   │ Control    │         │          │   │ Traffic        │
+   │ Plane      │         │          │   │ Manager        │
+   │ +KM embed  │         │          │   │                │
+   └─────┬──────┘         │          │   └───────┬────────┘
+         │  wso2am-cp-service        │           │
+         └────────────┬──────────────┘           │
+                      │                          │
+               ┌──────┴──────────────────────────┘
                │
          ┌─────┴──────┐
          │  Gateway    │
@@ -28,19 +28,29 @@ Deploy WSO2 APIM 4.7 in distributed mode on a local Kubernetes cluster with Post
          └─────────────┘
 ```
 
-**Components:**
-- **Control Plane** (HA, 2 pods) — Publisher, DevPortal, Admin, embedded Key Manager
-- **Traffic Manager** (HA, 2 pods) — Throttling and rate limiting
+**Components (single-instance for local dev):**
+- **Control Plane** (1 pod) — Publisher, DevPortal, Admin, embedded Key Manager
+- **Traffic Manager** (1 pod) — Throttling and rate limiting
 - **Gateway** (1 pod) — API traffic routing
+
+**Docker images (profile-specific):**
+
+| Component | Image | Product Home |
+|-----------|-------|-------------|
+| Control Plane | `wso2/wso2am-acp:4.7.0-alpha` | `wso2am-acp-4.7.0-alpha` |
+| Gateway | `wso2/wso2am-universal-gw:4.7.0-alpha` | `wso2am-universal-gw-4.7.0-alpha` |
+| Traffic Manager | `wso2/wso2am-tm:4.7.0-alpha` | `wso2am-tm-4.7.0-alpha` |
 
 ## Prerequisites
 
 - Local Kubernetes cluster (Rancher Desktop, Docker Desktop, Minikube, or Kind)
 - `kubectl` configured and connected
 - `helm` v3+ installed
-- Minimum **4 CPUs** and **8 GB free RAM** (5 pods total)
+- Minimum **4 CPUs** and **12 GB RAM** allocated to the cluster (3 APIM pods + PostgreSQL)
 
 ## Deployment
+
+> **Important:** Deploy components in order (CP → TM → GW). Each depends on the previous.
 
 ### 1. Create namespace
 
@@ -66,7 +76,7 @@ kubectl wait --for=condition=complete job/postgresql-schema-init -n apim --timeo
 helm install cp ./distributed/control-plane -n apim -f distributed/control-plane/local-values-pg.yaml
 ```
 
-Wait for both HA instances:
+Wait for CP to be ready:
 ```bash
 kubectl wait --for=condition=ready pod -l deployment=wso2am-cp -n apim --timeout=300s
 ```
@@ -77,7 +87,7 @@ kubectl wait --for=condition=ready pod -l deployment=wso2am-cp -n apim --timeout
 helm install tm ./distributed/traffic-manager -n apim -f distributed/traffic-manager/local-values-pg.yaml
 ```
 
-Wait for both HA instances:
+Wait for TM to be ready:
 ```bash
 kubectl wait --for=condition=ready pod -l deployment=wso2am-tm -n apim --timeout=300s
 ```
@@ -88,7 +98,7 @@ kubectl wait --for=condition=ready pod -l deployment=wso2am-tm -n apim --timeout
 helm install gw ./distributed/gateway -n apim -f distributed/gateway/local-values-pg.yaml
 ```
 
-Wait for pod ready:
+Wait for GW to be ready:
 ```bash
 kubectl wait --for=condition=ready pod -l deployment=wso2am-gw -n apim --timeout=300s
 ```
@@ -99,14 +109,12 @@ kubectl wait --for=condition=ready pod -l deployment=wso2am-gw -n apim --timeout
 kubectl get pods -n apim
 ```
 
-Expected output — 6 pods:
+Expected output — 4 pods:
 ```
 NAME                                       READY   STATUS    RESTARTS   AGE
 postgresql-...                             1/1     Running   0          ...
 wso2am-cp-deployment-1-...                 1/1     Running   0          ...
-wso2am-cp-deployment-2-...                 1/1     Running   0          ...
 wso2am-tm-deployment-1-...                 1/1     Running   0          ...
-wso2am-tm-deployment-2-...                 1/1     Running   0          ...
 wso2am-gw-deployment-...                   1/1     Running   0          ...
 ```
 
@@ -141,6 +149,14 @@ helm uninstall cp -n apim
 helm uninstall postgresql -n apim
 kubectl delete namespace apim
 ```
+
+## Enabling HA (Production-like)
+
+To run with HA (2 instances each for CP and TM), update the local-values-pg.yaml files:
+
+1. **CP and TM**: Set `wso2.deployment.highAvailability: true`
+2. **GW and TM**: Add `wso2am-cp-2-service` back to `throttling.urls` and `eventhub.urls`
+3. **Resources**: Ensure cluster has at least **20 GB RAM** for 5 APIM pods at 4Gi each
 
 ## Service Naming
 
@@ -233,11 +249,11 @@ kubectl rollout restart deployment -n apim -l deployment=wso2am-gw
 
 | Component | Instances | CPU Request | Memory Request | CPU Limit | Memory Limit |
 |-----------|-----------|-------------|----------------|-----------|--------------|
-| Control Plane | 2 | 1500m each | 2Gi each | 2000m | 3Gi |
-| Traffic Manager | 2 | 1500m each | 2Gi each | 2000m | 3Gi |
-| Gateway | 1 | 1500m | 2Gi | 2000m | 3Gi |
+| Control Plane | 1 | 1500m | 2Gi | 2000m | 4Gi |
+| Traffic Manager | 1 | 1500m | 2Gi | 2000m | 4Gi |
+| Gateway | 1 | 1500m | 2Gi | 2000m | 4Gi |
 | PostgreSQL | 1 | 250m | 512Mi | 500m | 1Gi |
-| **Total** | **6** | **8750m** | **10.5Gi** | — | — |
+| **Total** | **4** | **5250m** | **6.5Gi** | — | — |
 
 ## Files
 
