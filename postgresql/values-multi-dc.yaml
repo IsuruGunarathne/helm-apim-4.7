@@ -1,0 +1,5 @@
+# Override for multi-DC deployment — uses replication-safe DB scripts
+schemaInit:
+  scripts:
+    apim_db: "dbscripts/multi-dc/Postgresql/apimgt/tables.sql"
+    shared_db: "dbscripts/multi-dc/Postgresql/tables.sql"

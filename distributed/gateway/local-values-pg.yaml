@@ -1,0 +1,123 @@
+fullnameOverride: "wso2am-gw"
+
+aws:
+  enabled: false
+azure:
+  enabled: false
+gcp:
+  enabled: false
+
+kubernetes:
+  gatewayAPI:
+    enabled: false
+  ingress:
+    gateway:
+      enabled: false
+      hostname: "localhost"
+    websocket:
+      enabled: false
+    websub:
+      enabled: false
+  initContainers:
+    - name: postgresql-driver-init
+      image: busybox:1.36
+      command:
+        - /bin/sh
+        - -c
+        - |
+          wget -O /jdbc-driver/postgresql-42.7.4.jar \
+            "https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.4/postgresql-42.7.4.jar" && \
+          echo "PostgreSQL JDBC driver downloaded successfully"
+      volumeMounts:
+        - name: postgresql-driver-vol
+          mountPath: /jdbc-driver
+  extraVolumes:
+    - name: postgresql-driver-vol
+      emptyDir: {}
+  extraVolumeMounts:
+    - name: postgresql-driver-vol
+      mountPath: /home/wso2carbon/wso2am-universal-gw-4.7.0-alpha/repository/components/lib/postgresql-42.7.4.jar
+      subPath: postgresql-42.7.4.jar
+      readOnly: true
+
+wso2:
+  apim:
+    version: "4.7.0"
+    portOffset: 0
+    secureVaultEnabled: false
+    configurations:
+      adminUsername: "admin"
+      adminPassword: "admin"
+      encryption:
+        key: "ABCDefgh12345678"
+      security:
+        jksSecretName: ""
+        keystores:
+          primary:
+            enabled: false
+          tls:
+            enabled: true
+            password: "wso2carbon"
+            keyPassword: "wso2carbon"
+          internal:
+            enabled: false
+        truststore:
+          password: "wso2carbon"
+      transport:
+        http:
+          proxyPort: 8280
+        https:
+          proxyPort: 8243
+      databases:
+        type: "postgres"
+        jdbc:
+          driver: "org.postgresql.Driver"
+        shared_db:
+          url: "jdbc:postgresql://postgresql.apim.svc:5432/shared_db"
+          username: "postgres"
+          password: "root"
+          poolParameters:
+            validationQuery: "SELECT 1"
+      # Inter-component connectivity (defaults match our fullnameOverride naming)
+      km:
+        serviceUrl: "wso2am-cp-service"
+        servicePort: 9443
+      throttling:
+        serviceUrl: "wso2am-cp-service"
+        servicePort: 9443
+        urls:
+          - "wso2am-cp-1-service"
+          - "wso2am-cp-2-service"
+        portOffset: 0
+      eventhub:
+        enabled: true
+        serviceUrl: "wso2am-cp-service"
+        servicePort: 9443
+        urls:
+          - "wso2am-cp-1-service"
+          - "wso2am-cp-2-service"
+
+  deployment:
+    replicas: 1
+    minReplicas: 1
+    maxReplicas: 1
+    startupProbe:
+      initialDelaySeconds: 120
+      periodSeconds: 10
+      failureThreshold: 6
+    image:
+      registry: "docker.io"
+      repository: "wso2/wso2am-universal-gw:4.7.0-alpha"
+      digest: "sha256:e2ff31c45c6f717471f0d9d15cb05cc5bb160cfb51a5fcf53aa82109bd02046f"
+      imagePullPolicy: IfNotPresent
+    resources:
+      requests:
+        memory: "2Gi"
+        cpu: "1500m"
+      limits:
+        memory: "4Gi"
+        cpu: "2000m"
+      jvm:
+        memory:
+          xms: "1024m"
+          xmx: "2048m"

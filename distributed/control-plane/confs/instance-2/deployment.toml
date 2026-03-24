@@ -324,7 +324,7 @@ enable = true
 {{- end }}
 
 [transport.https.properties]
-proxyPort = 443
+proxyPort = {{ .Values.wso2.apim.configurations.transport.https.proxyPort | default 443 }}
 
 [[event_handler]]
 name="userPostSelfRegistration"

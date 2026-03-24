@@ -74,6 +74,10 @@ spec:
       imagePullSecrets:
       - name: {{ template "apim-helm-tm.fullname" . }}-docker-registry-auth
       {{- end }}
+      {{- if .Values.kubernetes.initContainers }}
+      initContainers:
+        {{- toYaml .Values.kubernetes.initContainers | nindent 8 }}
+      {{- end }}
       containers:
       - name: wso2am-traffic-manager
         image: {{ .Values.wso2.deployment.image.registry }}/{{ .Values.wso2.deployment.image.repository }}@{{ .Values.wso2.deployment.image.digest }}
@@ -251,6 +255,7 @@ spec:
           readOnly: true
         {{- end }}
         {{- if .Values.kubernetes.extraVolumeMounts }}{{ toYaml .Values.kubernetes.extraVolumeMounts | nindent 8 }}{{- end }}
+        {{- if .Values.wso2.apim.configurations.security.jksSecretName }}
         - name: wso2am-traffic-manager-keystores
           mountPath: /home/wso2carbon/wso2-config-volume/repository/resources/security/{{ .Values.wso2.apim.configurations.security.truststore.name }}
           subPath: {{ .Values.wso2.apim.configurations.security.truststore.name }}
@@ -268,6 +273,7 @@ spec:
         - name: wso2am-traffic-manager-keystores
           mountPath: /home/wso2carbon/wso2-config-volume/repository/resources/security/{{ .Values.wso2.apim.configurations.security.keystores.internal.name }}
           subPath: {{ .Values.wso2.apim.configurations.security.keystores.internal.name }}
+        {{- end }}
         {{- end }}
       {{- if .Values.wso2.deployment.nodeSelector }}
       nodeSelector:
@@ -314,7 +320,9 @@ spec:
           {{- end }}
       {{- end }}
       {{- if .Values.kubernetes.extraVolumes }}{{ toYaml .Values.kubernetes.extraVolumes | nindent 6 }}{{- end }}
+      {{- if .Values.wso2.apim.configurations.security.jksSecretName }}
       - name: wso2am-traffic-manager-keystores
         secret:
           secretName: {{ .Values.wso2.apim.configurations.security.jksSecretName }}
+      {{- end }}
 {{- end }}

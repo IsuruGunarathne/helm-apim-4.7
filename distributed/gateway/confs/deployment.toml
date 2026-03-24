@@ -119,11 +119,11 @@ enable = false
 
 [transport.http]
 properties.port = 9763
-properties.proxyPort = 80
+properties.proxyPort = {{ .Values.wso2.apim.configurations.transport.http.proxyPort | default 80 }}
 
 [transport.https]
 properties.port = 9443
-properties.proxyPort = 443
+properties.proxyPort = {{ .Values.wso2.apim.configurations.transport.https.proxyPort | default 443 }}
 
 # key manager implementation
 [apim.key_manager]

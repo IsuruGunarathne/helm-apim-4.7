@@ -19,6 +19,7 @@ spec:
       containers:
         - name: postgresql
           image: {{ .Values.postgresql.image }}
+          args: ["-c", "max_connections=300"]
           env:
             - name: POSTGRES_PASSWORD
               value: {{ .Values.postgresql.password | quote }}
