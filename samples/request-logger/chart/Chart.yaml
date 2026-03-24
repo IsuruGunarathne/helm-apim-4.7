@@ -1,0 +1,5 @@
+apiVersion: v2
+name: request-logger
+description: A simple Book CRUD API that logs all incoming requests. Used as a backend for API testing.
+version: 0.1.0
+appVersion: "1.0.0"
