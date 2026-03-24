@@ -78,6 +78,8 @@ wso2:
           password: "root"
           poolParameters:
             validationQuery: "SELECT 1"
+      oauth_config:
+        oauth2JWKSUrl: "https://wso2am-cp-service:9443/oauth2/jwks"
       gateway:
         environments:
           - name: "Default"
@@ -106,10 +108,10 @@ wso2:
       imagePullPolicy: IfNotPresent
     resources:
       requests:
-        memory: "2Gi"
+        memory: "4Gi"
         cpu: "1500m"
       limits:
-        memory: "4Gi"
+        memory: "5Gi"
         cpu: "2000m"
       jvm:
         memory:
