@@ -11,34 +11,29 @@ Deploy WSO2 API Manager 4.7 (all-in-one) on a local Kubernetes cluster with an i
 
 ## Quick Start
 
-### 1. Deploy MySQL
+### 1. Create the namespace
 
 ```bash
-kubectl apply -f local-setup/mysql.yaml
+kubectl create namespace apim
 ```
 
-This creates:
-- Namespace `apim`
+### 2. Deploy MySQL
+
+```bash
+helm install mysql ./mysql --namespace apim
+```
+
+This installs:
 - MySQL 8.0 deployment with databases `apim_db` and `shared_db`
 - PersistentVolumeClaim (1Gi) for data persistence
 - Headless Service `mysql` on port 3306
+- **Post-install Job** that automatically extracts APIM SQL scripts from the WSO2 image and loads them into both databases (~246 tables in `apim_db`, ~51 in `shared_db`)
 
-Wait for MySQL to be ready:
+Wait for MySQL to be ready and schemas to be loaded:
 ```bash
-kubectl wait --for=condition=ready pod -l app=mysql -n apim --timeout=120s
+kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=mysql -n apim --timeout=120s
+kubectl wait --for=condition=complete job/mysql-schema-init -n apim --timeout=180s
 ```
-
-### 2. Initialize APIM Database Schemas
-
-```bash
-bash local-setup/init-db.sh
-```
-
-This script:
-- Spins up a temporary APIM pod to extract SQL scripts
-- Runs `dbscripts/apimgt/mysql.sql` against `apim_db` (creates ~246 tables)
-- Runs `dbscripts/mysql.sql` against `shared_db` (creates ~51 tables)
-- Cleans up the temporary pod
 
 ### 3. Install WSO2 API Manager
 
@@ -85,7 +80,8 @@ kubectl -n apim port-forward svc/wso2am-wso2am-all-in-one-am-service 8243:8243
 
 ```bash
 helm uninstall wso2am -n apim
-kubectl delete -f local-setup/mysql.yaml
+helm uninstall mysql -n apim
+kubectl delete namespace apim
 ```
 
 ## Configuration Details
@@ -100,6 +96,7 @@ kubectl delete -f local-setup/mysql.yaml
 - MySQL 8.0 running in-cluster with root password `root`
 - Data persists across pod restarts via PVC
 - JDBC URLs use `&amp;` for XML-safe ampersand encoding in TOML config
+- Schema initialization is handled automatically by a Helm post-install Job
 
 ### What's Disabled for Local
 
@@ -115,7 +112,7 @@ kubectl delete -f local-setup/mysql.yaml
 | Component | CPU Request | Memory Request | CPU Limit | Memory Limit |
 |-----------|-------------|----------------|-----------|--------------|
 | APIM | 1500m | 2Gi | 2000m | 3Gi |
-| MySQL | 250m | 256Mi | 500m | 512Mi |
+| MySQL | 250m | 512Mi | 500m | 1Gi |
 
 ## Troubleshooting
 
@@ -132,6 +129,17 @@ Common issues:
 - **`NullPointerException` in user.core.Activator** — truststore password is empty. Ensure `security.truststore.password` is set.
 - **Carbon redirects to `localhost/carbon` (port 443)** — `transport.https.proxyPort` must be `9443` for port-forward usage. Already set in `local-values.yaml`.
 
+### Schema init job failed
+
+```bash
+kubectl logs -n apim job/mysql-schema-init
+```
+
+To re-run the schema init job:
+```bash
+helm upgrade mysql ./mysql --namespace apim
+```
+
 ### Check rendered configuration
 
 ```bash
@@ -141,7 +149,7 @@ kubectl get configmap -n apim wso2am-wso2am-all-in-one-am-conf-1 -o jsonpath='{.
 ### MySQL connectivity
 
 ```bash
-MYSQL_POD=$(kubectl get pod -l app=mysql -n apim -o jsonpath='{.items[0].metadata.name}')
+MYSQL_POD=$(kubectl get pod -l app.kubernetes.io/name=mysql -n apim -o jsonpath='{.items[0].metadata.name}')
 kubectl exec $MYSQL_POD -n apim -- mysql -uroot -proot -e "SHOW DATABASES;"
 ```
 
@@ -151,10 +159,21 @@ kubectl exec $MYSQL_POD -n apim -- mysql -uroot -proot -e "SHOW DATABASES;"
 helm upgrade wso2am ./all-in-one --namespace apim -f all-in-one/local-values.yaml
 ```
 
+### Reset databases (e.g., to fix OAuth callback mismatch)
+
+If you need to reinitialize the databases from scratch:
+```bash
+helm uninstall mysql -n apim
+kubectl delete pvc mysql-data -n apim
+helm install mysql ./mysql --namespace apim
+kubectl wait --for=condition=complete job/mysql-schema-init -n apim --timeout=180s
+# Then restart APIM so it re-registers OAuth apps
+kubectl rollout restart deployment -l deployment=wso2am-wso2am-all-in-one-am -n apim
+```
+
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `local-setup/mysql.yaml` | MySQL Deployment, Service, PVC, init ConfigMap |
-| `local-setup/init-db.sh` | Database schema initialization script |
-| `all-in-one/local-values.yaml` | Helm values override for local deployment |
+| `mysql/` | Helm chart for MySQL deployment + schema initialization |
+| `all-in-one/local-values.yaml` | Helm values override for local APIM deployment |

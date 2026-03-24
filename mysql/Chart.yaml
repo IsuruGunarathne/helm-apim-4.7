@@ -1,0 +1,5 @@
+apiVersion: v2
+name: wso2am-mysql
+description: MySQL database for WSO2 API Manager with APIM schema initialization.
+version: 0.1.0
+appVersion: "8.0"

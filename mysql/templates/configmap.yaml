@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "wso2am-mysql.fullname" . }}-initdb
+  labels:
+    {{- include "wso2am-mysql.labels" . | nindent 4 }}
+data:
+  init.sql: |
+    {{- range .Values.databases }}
+    CREATE DATABASE IF NOT EXISTS {{ . }} CHARACTER SET latin1;
+    {{- end }}

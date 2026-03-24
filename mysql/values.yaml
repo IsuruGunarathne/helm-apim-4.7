@@ -1,0 +1,28 @@
+mysql:
+  image: "mysql:8.0"
+  rootPassword: "root"
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+  persistence:
+    enabled: true
+    size: "1Gi"
+    storageClass: ""
+
+databases:
+  - apim_db
+  - shared_db
+
+schemaInit:
+  enabled: true
+  apim:
+    image: "docker.io/wso2/wso2am:4.7.0-alpha"
+    home: "/home/wso2carbon/wso2am-4.7.0-alpha"
+  scripts:
+    # path relative to apim.home
+    apim_db: "dbscripts/apimgt/mysql.sql"
+    shared_db: "dbscripts/mysql.sql"
