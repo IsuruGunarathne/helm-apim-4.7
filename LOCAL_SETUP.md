@@ -1,6 +1,6 @@
 # Local Kubernetes Setup — WSO2 API Manager 4.7 All-in-One
 
-Deploy WSO2 API Manager 4.7 (all-in-one) on a local Kubernetes cluster with an in-cluster MySQL database.
+Deploy WSO2 API Manager 4.7 (all-in-one) on a local Kubernetes cluster with an in-cluster database (MySQL or PostgreSQL).
 
 ## Prerequisites
 
@@ -17,28 +17,42 @@ Deploy WSO2 API Manager 4.7 (all-in-one) on a local Kubernetes cluster with an i
 kubectl create namespace apim
 ```
 
-### 2. Deploy MySQL
+### 2. Deploy the database
+
+Choose **one** of the following:
+
+#### Option A: MySQL
 
 ```bash
 helm install mysql ./mysql --namespace apim
-```
-
-This installs:
-- MySQL 8.0 deployment with databases `apim_db` and `shared_db`
-- PersistentVolumeClaim (1Gi) for data persistence
-- Headless Service `mysql` on port 3306
-- **Post-install Job** that automatically extracts APIM SQL scripts from the WSO2 image and loads them into both databases (~246 tables in `apim_db`, ~51 in `shared_db`)
-
-Wait for MySQL to be ready and schemas to be loaded:
-```bash
 kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=mysql -n apim --timeout=120s
 kubectl wait --for=condition=complete job/mysql-schema-init -n apim --timeout=180s
 ```
 
-### 3. Install WSO2 API Manager
+#### Option B: PostgreSQL
 
 ```bash
+helm install postgresql ./postgresql --namespace apim
+kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=postgresql -n apim --timeout=120s
+kubectl wait --for=condition=complete job/postgresql-schema-init -n apim --timeout=180s
+```
+
+Both options install:
+- Database deployment with databases `apim_db` and `shared_db`
+- PersistentVolumeClaim (1Gi) for data persistence
+- Headless Service on the standard port (MySQL: 3306, PostgreSQL: 5432)
+- **Post-install Job** that automatically extracts APIM SQL scripts and loads schemas
+
+### 3. Install WSO2 API Manager
+
+For MySQL:
+```bash
 helm install wso2am ./all-in-one --namespace apim -f all-in-one/local-values.yaml
+```
+
+For PostgreSQL:
+```bash
+helm install wso2am ./all-in-one --namespace apim -f all-in-one/local-values-pg.yaml
 ```
 
 Wait for the APIM pod to be ready (~3-4 minutes):
@@ -80,7 +94,9 @@ kubectl -n apim port-forward svc/wso2am-wso2am-all-in-one-am-service 8243:8243
 
 ```bash
 helm uninstall wso2am -n apim
-helm uninstall mysql -n apim
+# Whichever database you deployed:
+helm uninstall mysql -n apim        # if MySQL
+helm uninstall postgresql -n apim   # if PostgreSQL
 kubectl delete namespace apim
 ```
 
@@ -89,13 +105,15 @@ kubectl delete namespace apim
 ### Image
 
 - `wso2/wso2am:4.7.0-alpha` from Docker Hub
-- MySQL connector (v9.1.0) is downloaded at pod startup via an init container
+- JDBC driver is downloaded at pod startup via an init container:
+  - MySQL: `mysql-connector-j-9.1.0.jar`
+  - PostgreSQL: `postgresql-42.7.4.jar`
 
 ### Database
 
-- MySQL 8.0 running in-cluster with root password `root`
+- **MySQL 8.0** or **PostgreSQL 17** running in-cluster with password `root`
 - Data persists across pod restarts via PVC
-- JDBC URLs use `&amp;` for XML-safe ampersand encoding in TOML config
+- MySQL JDBC URLs use `&amp;` for XML-safe ampersand encoding in TOML config
 - Schema initialization is handled automatically by a Helm post-install Job
 
 ### What's Disabled for Local
@@ -112,7 +130,7 @@ kubectl delete namespace apim
 | Component | CPU Request | Memory Request | CPU Limit | Memory Limit |
 |-----------|-------------|----------------|-----------|--------------|
 | APIM | 1500m | 2Gi | 2000m | 3Gi |
-| MySQL | 250m | 512Mi | 500m | 1Gi |
+| MySQL / PostgreSQL | 250m | 512Mi | 500m | 1Gi |
 
 ## Troubleshooting
 
@@ -176,4 +194,6 @@ kubectl rollout restart deployment -l deployment=wso2am-wso2am-all-in-one-am -n 
 | File | Purpose |
 |------|---------|
 | `mysql/` | Helm chart for MySQL deployment + schema initialization |
-| `all-in-one/local-values.yaml` | Helm values override for local APIM deployment |
+| `postgresql/` | Helm chart for PostgreSQL deployment + schema initialization |
+| `all-in-one/local-values.yaml` | Helm values override for local APIM deployment (MySQL) |
+| `all-in-one/local-values-pg.yaml` | Helm values override for local APIM deployment (PostgreSQL) |

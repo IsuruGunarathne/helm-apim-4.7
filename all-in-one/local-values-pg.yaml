@@ -1,0 +1,109 @@
+aws:
+  enabled: false
+azure:
+  enabled: false
+gcp:
+  enabled: false
+
+kubernetes:
+  gatewayAPI:
+    enabled: false
+  ingress:
+    management:
+      enabled: false
+      hostname: "localhost"
+    gateway:
+      enabled: false
+      hostname: "localhost"
+  initContainers:
+    - name: postgresql-driver-init
+      image: busybox:1.36
+      command:
+        - /bin/sh
+        - -c
+        - |
+          wget -O /jdbc-driver/postgresql-42.7.4.jar \
+            "https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.4/postgresql-42.7.4.jar" && \
+          echo "PostgreSQL JDBC driver downloaded successfully"
+      volumeMounts:
+        - name: postgresql-driver-vol
+          mountPath: /jdbc-driver
+  extraVolumes:
+    - name: postgresql-driver-vol
+      emptyDir: {}
+  extraVolumeMounts:
+    - name: postgresql-driver-vol
+      mountPath: /home/wso2carbon/wso2am-4.7.0-alpha/repository/components/lib/postgresql-42.7.4.jar
+      subPath: postgresql-42.7.4.jar
+      readOnly: true
+
+wso2:
+  apim:
+    version: "4.7.0"
+    secureVaultEnabled: false
+    configurations:
+      adminUsername: "admin"
+      adminPassword: "admin"
+      encryption:
+        key: "ABCDefgh12345678"
+      security:
+        keystores:
+          tls:
+            enabled: true
+            password: "wso2carbon"
+            keyPassword: "wso2carbon"
+        truststore:
+          password: "wso2carbon"
+      transport:
+        http:
+          proxyPort: 9763
+        https:
+          proxyPort: 9443
+      gateway:
+        environments:
+          - name: "Default"
+            type: "hybrid"
+            gatewayType: "Regular"
+            provider: "wso2"
+            displayInApiConsole: true
+            description: "This is a hybrid gateway that handles both production and sandbox token traffic."
+            showAsTokenEndpointUrl: true
+            serviceName: "localhost"
+            servicePort: 9443
+            wsHostname: "localhost"
+            httpHostname: "localhost"
+            websubHostname: "localhost"
+      databases:
+        type: "postgres"
+        jdbc:
+          driver: "org.postgresql.Driver"
+        apim_db:
+          url: "jdbc:postgresql://postgresql.apim.svc:5432/apim_db"
+          username: "postgres"
+          password: "root"
+        shared_db:
+          url: "jdbc:postgresql://postgresql.apim.svc:5432/shared_db"
+          username: "postgres"
+          password: "root"
+
+  deployment:
+    highAvailability: false
+    image:
+      registry: "docker.io"
+      repository: "wso2/wso2am:4.7.0-alpha"
+      digest: "sha256:086353fa4cb4904b6f0c1ba90d2915a5fb9680bedeb7a6a301717044d1c41e44"
+      imagePullPolicy: IfNotPresent
+    resources:
+      requests:
+        memory: "2Gi"
+        cpu: "1500m"
+      limits:
+        memory: "3Gi"
+        cpu: "2000m"
+      jvm:
+        memory:
+          xms: "2048m"
+          xmx: "2048m"
+    persistence:
+      solrIndexing:
+        enabled: false

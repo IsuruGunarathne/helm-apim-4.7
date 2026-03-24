@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "wso2am-postgresql.fullname" . }}-initdb
+  labels:
+    {{- include "wso2am-postgresql.labels" . | nindent 4 }}
+data:
+  init-databases.sh: |
+    #!/bin/bash
+    set -e
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+    {{- range .Values.databases }}
+        CREATE DATABASE {{ . }};
+    {{- end }}
+    EOSQL
