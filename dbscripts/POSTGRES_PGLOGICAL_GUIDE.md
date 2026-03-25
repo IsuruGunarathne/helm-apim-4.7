@@ -212,7 +212,7 @@ This adds all tables in the `public` schema to the default replication set. All 
 
 ## Step 8: Create Subscriptions (Bi-Directional)
 
-### 8a. DC2 subscribes to DC1 (initial sync with data copy)
+### 8a. DC2 subscribes to DC1
 
 **DC2 — apim_db** subscribes to DC1's apim_db:
 ```sql
@@ -221,7 +221,7 @@ SELECT pglogical.create_subscription(
     subscription_name := 'dc2_sub_apim',
     replication_sets := ARRAY['default'],
     provider_dsn := 'host=apim-4-7-eus2.postgres.database.azure.com port=5432 dbname=apim_db user=apimadmineast password={your-password}',
-    synchronize_data := true,
+    synchronize_data := false,
     forward_origins := '{}'
 );
 ```
@@ -233,20 +233,18 @@ SELECT pglogical.create_subscription(
     subscription_name := 'dc2_sub_shared',
     replication_sets := ARRAY['default'],
     provider_dsn := 'host=apim-4-7-eus2.postgres.database.azure.com port=5432 dbname=shared_db user=apimadmineast password={your-password}',
-    synchronize_data := true,
+    synchronize_data := false,
     forward_origins := '{}'
 );
 ```
 
-**Wait for initial sync to complete** before proceeding:
+**Verify** subscriptions are active:
 ```sql
 SELECT subscription_name, status FROM pglogical.show_subscription_status();
--- Wait until status = 'replicating' for both subscriptions
+-- Both should show status = 'replicating'
 ```
 
-### 8b. DC1 subscribes to DC2 (reverse direction, no data copy)
-
-> `synchronize_data := false` — data already exists on DC1, no need to copy back.
+### 8b. DC1 subscribes to DC2 (reverse direction)
 
 **DC1 — apim_db** subscribes to DC2's apim_db:
 ```sql
@@ -271,6 +269,8 @@ SELECT pglogical.create_subscription(
     forward_origins := '{}'
 );
 ```
+
+> **Note:** `synchronize_data` is set to `false` for all subscriptions because both databases are freshly created with identical schemas and no data. Setting it to `true` can cause pglogical to get stuck in a nonrecoverable state on Azure Flexible Server. If you need to sync existing data later, use `pg_dump`/`pg_restore` instead.
 
 ### Why `forward_origins := '{}'`?
 
