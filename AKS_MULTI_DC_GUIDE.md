@@ -312,6 +312,32 @@ kubectl wait --for=condition=ready pod -l deployment=wso2am-gw -n apim --timeout
 
 ---
 
+## Part 4.5: Fix OAuth Callback URLs for DC2
+
+When DC1 starts first, it registers the Publisher and DevPortal as OAuth applications with callback URLs pointing to `cp.eus2.apim.example.com`. These registrations get replicated to DC2 via pglogical. DC2's Publisher/DevPortal will fail to login with **"Registered callback does not match with the provided url"** because the registered callbacks don't include the `wus2` hostname.
+
+**Fix:** Update the OAuth callback URLs to include both DC hostnames.
+
+1. Go to DC2 Carbon: `https://cp.wus2.apim.example.com/carbon` (admin / admin)
+2. Navigate to **Identity** > **Service Providers** > **List**
+3. Edit `apim_publisher` > **Inbound Authentication Configuration** > **OAuth/OpenID Connect Configuration** > **Edit**
+4. Update the **Callback Url** to:
+   ```
+   regexp=(https://cp.eus2.apim.example.com/publisher/services/auth/callback/login|https://cp.eus2.apim.example.com/publisher/services/auth/callback/logout|https://cp.wus2.apim.example.com/publisher/services/auth/callback/login|https://cp.wus2.apim.example.com/publisher/services/auth/callback/logout)
+   ```
+5. Click **Update**
+6. Edit `apim_devportal` and update its **Callback Url** to:
+   ```
+   regexp=(https://cp.eus2.apim.example.com/devportal/services/auth/callback/login|https://cp.eus2.apim.example.com/devportal/services/auth/callback/logout|https://cp.wus2.apim.example.com/devportal/services/auth/callback/login|https://cp.wus2.apim.example.com/devportal/services/auth/callback/logout)
+   ```
+7. Click **Update**
+
+DC2's Publisher and DevPortal login should now work.
+
+> **Note:** This only needs to be done once. The updated callback URLs are stored in `apim_db` and will persist across pod restarts.
+
+---
+
 ## Part 5: Cross-DC Event Communication
 
 Each Control Plane needs to publish events (API deploy/undeploy, token revocation, key updates) to the remote region's CP. This uses JMS over port 5672.
