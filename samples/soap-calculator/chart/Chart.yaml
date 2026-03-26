@@ -1,0 +1,5 @@
+apiVersion: v2
+name: soap-calculator
+description: A simple SOAP Calculator service for testing SOAP API features in WSO2 APIM.
+version: 0.1.0
+appVersion: "1.0.0"
