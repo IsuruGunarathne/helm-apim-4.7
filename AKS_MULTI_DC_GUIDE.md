@@ -436,76 +436,71 @@ connectionfactory.TopicConnectionFactory = amqp://admin:admin@clientid/carbon?br
 topic.notification = notification
 topic.tokenRevocation = tokenRevocation
 topic.keyManager = keyManager
-topic.cacheInvalidation = cacheInvalidation
 topic.asyncWebhooksData = asyncWebhooksData
+topic.throttleData = throttleData
 " \
   --from-literal=notificationJMSPublisherRegion2.xml='<?xml version="1.0" encoding="UTF-8"?>
 <eventPublisher name="notificationJMSPublisherRegion2" statistics="disable" trace="disable" xmlns="http://wso2.org/carbon/eventpublisher">
-  <from streamName="notification_stream" version="1.0.0"/>
-  <mapping customMapping="disable" type="map"/>
+  <from streamName="org.wso2.apimgt.notification.stream" version="1.0.0"/>
+  <mapping customMapping="disable" type="json"/>
   <to eventAdapterType="jms">
     <property name="java.naming.factory.initial">org.wso2.andes.jndi.PropertiesFileInitialContextFactory</property>
     <property name="java.naming.provider.url">repository/conf/jndi-region2.properties</property>
     <property name="transport.jms.DestinationType">topic</property>
     <property name="transport.jms.Destination">notification</property>
-    <property name="java.naming.security.principal">admin</property>
-    <property name="java.naming.security.credentials">admin</property>
+    <property name="transport.jms.ConcurrentPublishers">allow</property>
     <property name="transport.jms.ConnectionFactoryJNDIName">TopicConnectionFactory</property>
   </to>
 </eventPublisher>' \
   --from-literal=tokenRevocationJMSPublisherRegion2.xml='<?xml version="1.0" encoding="UTF-8"?>
 <eventPublisher name="tokenRevocationJMSPublisherRegion2" statistics="disable" trace="disable" xmlns="http://wso2.org/carbon/eventpublisher">
-  <from streamName="tokenRevocation_stream" version="1.0.0"/>
-  <mapping customMapping="disable" type="map"/>
+  <from streamName="org.wso2.apimgt.token.revocation.stream" version="1.0.0"/>
+  <mapping customMapping="disable" type="json"/>
   <to eventAdapterType="jms">
     <property name="java.naming.factory.initial">org.wso2.andes.jndi.PropertiesFileInitialContextFactory</property>
     <property name="java.naming.provider.url">repository/conf/jndi-region2.properties</property>
     <property name="transport.jms.DestinationType">topic</property>
     <property name="transport.jms.Destination">tokenRevocation</property>
-    <property name="java.naming.security.principal">admin</property>
-    <property name="java.naming.security.credentials">admin</property>
+    <property name="transport.jms.ConcurrentPublishers">allow</property>
     <property name="transport.jms.ConnectionFactoryJNDIName">TopicConnectionFactory</property>
   </to>
 </eventPublisher>' \
   --from-literal=keymgtEventJMSEventPublisherRegion2.xml='<?xml version="1.0" encoding="UTF-8"?>
 <eventPublisher name="keymgtEventJMSEventPublisherRegion2" statistics="disable" trace="disable" xmlns="http://wso2.org/carbon/eventpublisher">
-  <from streamName="keyManager_stream" version="1.0.0"/>
-  <mapping customMapping="disable" type="map"/>
+  <from streamName="org.wso2.apimgt.keymgt.stream" version="1.0.0"/>
+  <mapping customMapping="disable" type="json"/>
   <to eventAdapterType="jms">
     <property name="java.naming.factory.initial">org.wso2.andes.jndi.PropertiesFileInitialContextFactory</property>
     <property name="java.naming.provider.url">repository/conf/jndi-region2.properties</property>
     <property name="transport.jms.DestinationType">topic</property>
     <property name="transport.jms.Destination">keyManager</property>
-    <property name="java.naming.security.principal">admin</property>
-    <property name="java.naming.security.credentials">admin</property>
+    <property name="transport.jms.ConcurrentPublishers">allow</property>
     <property name="transport.jms.ConnectionFactoryJNDIName">TopicConnectionFactory</property>
   </to>
 </eventPublisher>' \
   --from-literal=blockingEventJMSPublisherRegion2.xml='<?xml version="1.0" encoding="UTF-8"?>
 <eventPublisher name="blockingEventJMSPublisherRegion2" statistics="disable" trace="disable" xmlns="http://wso2.org/carbon/eventpublisher">
-  <from streamName="blocking_stream" version="1.0.0"/>
-  <mapping customMapping="disable" type="map"/>
+  <from streamName="org.wso2.blocking.request.stream" version="1.0.0"/>
+  <mapping customMapping="disable" type="json"/>
   <to eventAdapterType="jms">
     <property name="java.naming.factory.initial">org.wso2.andes.jndi.PropertiesFileInitialContextFactory</property>
     <property name="java.naming.provider.url">repository/conf/jndi-region2.properties</property>
     <property name="transport.jms.DestinationType">topic</property>
-    <property name="transport.jms.Destination">blocking</property>
-    <property name="java.naming.security.principal">admin</property>
-    <property name="java.naming.security.credentials">admin</property>
+    <property name="transport.jms.Destination">throttleData</property>
+    <property name="transport.jms.ConcurrentPublishers">allow</property>
     <property name="transport.jms.ConnectionFactoryJNDIName">TopicConnectionFactory</property>
   </to>
 </eventPublisher>' \
   --from-literal=asyncWebhooksEventPublisherRegion2.xml='<?xml version="1.0" encoding="UTF-8"?>
-<eventPublisher name="asyncWebhooksEventPublisherRegion2" statistics="disable" trace="disable" xmlns="http://wso2.org/carbon/eventpublisher">
-  <from streamName="asyncWebhooksData_stream" version="1.0.0"/>
-  <mapping customMapping="disable" type="map"/>
+<eventPublisher name="asyncWebhooksEventPublisher-1.0.0-Region2" statistics="disable" processing="disable" trace="disable" xmlns="http://wso2.org/carbon/eventpublisher">
+  <from streamName="org.wso2.apimgt.webhooks.request.stream" version="1.0.0"/>
+  <mapping customMapping="disable" type="json"/>
   <to eventAdapterType="jms">
     <property name="java.naming.factory.initial">org.wso2.andes.jndi.PropertiesFileInitialContextFactory</property>
     <property name="java.naming.provider.url">repository/conf/jndi-region2.properties</property>
     <property name="transport.jms.DestinationType">topic</property>
     <property name="transport.jms.Destination">asyncWebhooksData</property>
-    <property name="java.naming.security.principal">admin</property>
-    <property name="java.naming.security.credentials">admin</property>
+    <property name="transport.jms.ConcurrentPublishers">allow</property>
     <property name="transport.jms.ConnectionFactoryJNDIName">TopicConnectionFactory</property>
   </to>
 </eventPublisher>'
