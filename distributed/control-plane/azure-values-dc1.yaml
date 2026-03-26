@@ -20,6 +20,7 @@ kubernetes:
         nginx.ingress.kubernetes.io/proxy-body-size: "50m"
         nginx.ingress.kubernetes.io/proxy-read-timeout: "180"
         nginx.ingress.kubernetes.io/proxy-send-timeout: "180"
+        nginx.ingress.kubernetes.io/proxy-buffer-size: "16k"
   initContainers:
     - name: postgresql-driver-init
       image: busybox:1.36
