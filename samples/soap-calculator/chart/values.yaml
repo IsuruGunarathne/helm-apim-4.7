@@ -3,7 +3,7 @@ replicaCount: 1
 image:
   repository: isurugunarathne/soap-calculator
   tag: latest
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
 
 service:
   type: ClusterIP
