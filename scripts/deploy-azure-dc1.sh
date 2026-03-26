@@ -113,15 +113,6 @@ spec:
     - name: jms
       port: 5672
       targetPort: 5672
-    - name: binary
-      port: 9611
-      targetPort: 9611
-    - name: binary-secure
-      port: 9711
-      targetPort: 9711
-    - name: https
-      port: 9443
-      targetPort: 9443
 EOF
 
 echo "Waiting for ILB IP..."
