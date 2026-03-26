@@ -17,6 +17,11 @@ for release in gw tm cp; do
     fi
 done
 
+# Clean up cross-DC resources (not managed by Helm)
+echo "Cleaning up cross-DC resources..."
+kubectl delete svc wso2am-cp-ilb -n "$NAMESPACE" 2>/dev/null || true
+kubectl delete configmap cross-dc-publishers -n "$NAMESPACE" 2>/dev/null || true
+
 # Wait for pods to terminate
 echo ""
 echo "Waiting for pods to terminate..."

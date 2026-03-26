@@ -2,22 +2,66 @@
 set -e
 
 NAMESPACE="apim"
+CONTEXT="aks-apim-wus2"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 echo "=== WSO2 APIM 4.7 — Azure DC2 (West US 2) Deployment ==="
 echo "Namespace: $NAMESPACE"
+echo "Context:   $CONTEXT"
 echo ""
 
-# Create namespace if it doesn't exist
+# -------------------------------------------------------
+# 0. Switch kubectl context
+# -------------------------------------------------------
+echo "--- [0] Switching to context $CONTEXT ---"
+kubectl config use-context "$CONTEXT"
+
+# -------------------------------------------------------
+# 1. Install NGINX Ingress Controller (if not present)
+# -------------------------------------------------------
+echo ""
+echo "--- [1] NGINX Ingress Controller ---"
+if helm status ingress-nginx -n ingress-nginx &>/dev/null; then
+    echo "NGINX Ingress already installed, skipping."
+else
+    echo "Installing NGINX Ingress Controller..."
+    helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx 2>/dev/null || true
+    helm repo update
+    helm install ingress-nginx ingress-nginx/ingress-nginx \
+        --namespace ingress-nginx --create-namespace \
+        --set controller.replicaCount=2 \
+        --set controller.service.externalTrafficPolicy=Local
+fi
+
+echo "Waiting for NGINX external IP..."
+for i in $(seq 1 60); do
+    INGRESS_IP=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+    if [ -n "$INGRESS_IP" ]; then
+        echo "NGINX Ingress external IP: $INGRESS_IP"
+        break
+    fi
+    if [ "$i" -eq 60 ]; then
+        echo "WARNING: Timed out waiting for NGINX external IP. Continuing anyway..."
+    fi
+    sleep 5
+done
+
+# -------------------------------------------------------
+# 2. Create namespace
+# -------------------------------------------------------
+echo ""
+echo "--- [2] Namespace ---"
 kubectl get namespace "$NAMESPACE" &>/dev/null || {
     echo "Creating namespace $NAMESPACE..."
     kubectl create namespace "$NAMESPACE"
 }
 
-# 1. Deploy Control Plane (HA — 2 instances)
+# -------------------------------------------------------
+# 3. Deploy Control Plane (HA — 2 instances)
+# -------------------------------------------------------
 echo ""
-echo "--- [1/3] Deploying Control Plane (HA) ---"
+echo "--- [3/5] Deploying Control Plane (HA) ---"
 helm install cp "$REPO_DIR/distributed/control-plane" -n "$NAMESPACE" \
     -f "$REPO_DIR/distributed/control-plane/azure-values-dc2.yaml"
 
@@ -25,9 +69,11 @@ echo "Waiting for CP instances to be ready (this may take a few minutes)..."
 kubectl wait --for=condition=ready pod -l deployment=wso2am-cp -n "$NAMESPACE" --timeout=600s
 echo "Control Plane ready."
 
-# 2. Deploy Traffic Manager (HA — 2 instances)
+# -------------------------------------------------------
+# 4. Deploy Traffic Manager (HA — 2 instances)
+# -------------------------------------------------------
 echo ""
-echo "--- [2/3] Deploying Traffic Manager (HA) ---"
+echo "--- [4/5] Deploying Traffic Manager (HA) ---"
 helm install tm "$REPO_DIR/distributed/traffic-manager" -n "$NAMESPACE" \
     -f "$REPO_DIR/distributed/traffic-manager/azure-values-dc2.yaml"
 
@@ -35,9 +81,11 @@ echo "Waiting for TM instances to be ready..."
 kubectl wait --for=condition=ready pod -l deployment=wso2am-tm -n "$NAMESPACE" --timeout=600s
 echo "Traffic Manager ready."
 
-# 3. Deploy Gateway (2 replicas)
+# -------------------------------------------------------
+# 5. Deploy Gateway (2 replicas)
+# -------------------------------------------------------
 echo ""
-echo "--- [3/3] Deploying Gateway ---"
+echo "--- [5/5] Deploying Gateway ---"
 helm install gw "$REPO_DIR/distributed/gateway" -n "$NAMESPACE" \
     -f "$REPO_DIR/distributed/gateway/azure-values-dc2.yaml"
 
@@ -45,16 +93,83 @@ echo "Waiting for GW pods to be ready..."
 kubectl wait --for=condition=ready pod -l deployment=wso2am-gw -n "$NAMESPACE" --timeout=600s
 echo "Gateway ready."
 
-# Summary
+# -------------------------------------------------------
+# 6. Create Internal Load Balancer for cross-DC access
+# -------------------------------------------------------
 echo ""
-echo "=== DC2 Deployment Complete ==="
+echo "--- [6] Creating Internal Load Balancer for CP (cross-DC) ---"
+kubectl apply -n "$NAMESPACE" -f - <<'EOF'
+apiVersion: v1
+kind: Service
+metadata:
+  name: wso2am-cp-ilb
+  annotations:
+    service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+spec:
+  type: LoadBalancer
+  selector:
+    deployment: wso2am-cp
+  ports:
+    - name: jms
+      port: 5672
+      targetPort: 5672
+    - name: binary
+      port: 9611
+      targetPort: 9611
+    - name: binary-secure
+      port: 9711
+      targetPort: 9711
+    - name: https
+      port: 9443
+      targetPort: 9443
+EOF
+
+echo "Waiting for ILB IP..."
+for i in $(seq 1 60); do
+    ILB_IP=$(kubectl get svc wso2am-cp-ilb -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+    if [ -n "$ILB_IP" ]; then
+        echo "DC2 ILB IP: $ILB_IP"
+        break
+    fi
+    if [ "$i" -eq 60 ]; then
+        echo "WARNING: Timed out waiting for ILB IP. Check manually: kubectl get svc wso2am-cp-ilb -n $NAMESPACE"
+    fi
+    sleep 5
+done
+
+# -------------------------------------------------------
+# Summary
+# -------------------------------------------------------
+echo ""
+echo "========================================="
+echo "  DC2 Deployment Complete"
+echo "========================================="
+echo ""
 kubectl get pods -n "$NAMESPACE"
 echo ""
 echo "Expected: 6 pods (CP-1, CP-2, TM-1, TM-2, GW-1, GW-2)"
 echo ""
-echo "Ingress endpoints (once DNS is configured):"
+
+echo "Ingress:"
+kubectl get ingress -n "$NAMESPACE" 2>/dev/null || echo "  (no ingress resources found)"
+echo ""
+
+INGRESS_IP=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+ILB_IP=$(kubectl get svc wso2am-cp-ilb -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+
+echo "IPs:"
+echo "  Ingress external IP: ${INGRESS_IP:-<pending>}"
+echo "  CP ILB internal IP:  ${ILB_IP:-<pending>}"
+echo ""
+echo "DNS / /etc/hosts (add these):"
+echo "  ${INGRESS_IP:-<INGRESS_IP>}  cp.wus2.apim.example.com  gw.wus2.apim.example.com"
+echo ""
+echo "Endpoints (once DNS is configured):"
+echo "  Carbon:     https://cp.wus2.apim.example.com/carbon  (accept cert first!)"
 echo "  Publisher:  https://cp.wus2.apim.example.com/publisher"
 echo "  DevPortal:  https://cp.wus2.apim.example.com/devportal"
 echo "  Admin:      https://cp.wus2.apim.example.com/admin"
 echo "  Gateway:    https://gw.wus2.apim.example.com"
 echo "  Credentials: admin / admin"
+echo ""
+echo "Next step: Run ./scripts/setup-cross-dc.sh (after both DCs are deployed)"

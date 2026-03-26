@@ -144,21 +144,46 @@ helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
 helm repo update
 helm install ingress-nginx ingress-nginx/ingress-nginx \
   --namespace ingress-nginx --create-namespace \
-  --set controller.replicaCount=2
+  --set controller.replicaCount=2 \
+  --set controller.service.externalTrafficPolicy=Local
 
 # DC2
 kubectl config use-context aks-apim-wus2
 helm install ingress-nginx ingress-nginx/ingress-nginx \
   --namespace ingress-nginx --create-namespace \
-  --set controller.replicaCount=2
+  --set controller.replicaCount=2 \
+  --set controller.service.externalTrafficPolicy=Local
 ```
+
+> **Why `externalTrafficPolicy=Local`?** The Azure Load Balancer health probes hit the NGINX NodePort on path `/`. With the default policy (`Cluster`), NGINX returns `404` for `/` (no matching Host header), the LB marks all backends unhealthy, and silently drops all traffic. `Local` mode exposes a dedicated health check port (`/healthz`) that returns `200`, so the LB correctly detects healthy backends. It also preserves the client's real source IP.
 
 Get the external IPs (for DNS later):
 ```bash
 kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
 ```
 
-### 1.5 VNet Peering (for cross-DC communication)
+### 1.5 Open NSG for Ingress Traffic
+
+AKS creates its own NSG in the managed resource group (`MC_*`). Add inbound rules to allow HTTP/HTTPS from the internet:
+
+```bash
+# Find the AKS-managed NSG names
+DC1_MC_RG=$(az aks show --resource-group $RG --name aks-apim-eus2 --query nodeResourceGroup -o tsv)
+DC1_NSG=$(az network nsg list --resource-group $DC1_MC_RG --query '[0].name' -o tsv)
+
+DC2_MC_RG=$(az aks show --resource-group $RG --name aks-apim-wus2 --query nodeResourceGroup -o tsv)
+DC2_NSG=$(az network nsg list --resource-group $DC2_MC_RG --query '[0].name' -o tsv)
+
+# DC1 — East US 2
+az network nsg rule create --resource-group $DC1_MC_RG --nsg-name $DC1_NSG --name AllowHTTPS --priority 100 --direction Inbound --access Allow --protocol TCP --destination-port-ranges 80 443 --source-address-prefixes Internet
+
+# DC2 — West US 2
+az network nsg rule create --resource-group $DC2_MC_RG --nsg-name $DC2_NSG --name AllowHTTPS --priority 100 --direction Inbound --access Allow --protocol TCP --destination-port-ranges 80 443 --source-address-prefixes Internet
+```
+
+> **Important:** The NSG must be the one in the AKS managed resource group (`MC_*`), not the VNet's NSG. AKS attaches its own NSG (`aks-agentpool-*`) to the subnet. Adding rules to a different NSG has no effect.
+
+### 1.6 VNet Peering (for cross-DC communication)
 
 Since AKS clusters are deployed into the existing DB VNets, peering these VNets enables both cross-DC JMS communication **and** cross-region DB replication (pglogical) over a single peering link.
 
@@ -290,6 +315,8 @@ kubectl wait --for=condition=ready pod -l deployment=wso2am-gw -n apim --timeout
 ## Part 5: Cross-DC Event Communication
 
 Each Control Plane needs to publish events (API deploy/undeploy, token revocation, key updates) to the remote region's CP. This uses JMS over port 5672.
+
+**Automated:** Run `./scripts/setup-cross-dc.sh` after both DCs are deployed — it handles steps 5.1–5.3 automatically. The manual steps below are for reference.
 
 ### 5.1 Create Internal Load Balancer services
 
@@ -475,6 +502,15 @@ helm upgrade cp ./distributed/control-plane -n apim \
 
 Repeat on DC2 with the DC2 values file.
 
+```bash
+kubectl config use-context aks-apim-wus2
+
+helm upgrade cp ./distributed/control-plane -n apim \
+    -f distributed/control-plane/azure-values-dc2.yaml \
+    --set-json 'kubernetes.extraVolumes=[{"name":"postgresql-driver-vol","emptyDir":{}},{"name":"cross-dc-publishers","configMap":{"name":"cross-dc-publishers"}}]' \
+    --set-json 'kubernetes.extraVolumeMounts=[{"name":"postgresql-driver-vol","mountPath":"/home/wso2carbon/wso2am-acp-4.7.0-alpha/repository/components/lib/postgresql-42.7.4.jar","subPath":"postgresql-42.7.4.jar","readOnly":true},{"name":"cross-dc-publishers","mountPath":"/home/wso2carbon/wso2am-acp-4.7.0-alpha/repository/deployment/server/eventpublishers/notificationJMSPublisherRegion2.xml","subPath":"notificationJMSPublisherRegion2.xml"},{"name":"cross-dc-publishers","mountPath":"/home/wso2carbon/wso2am-acp-4.7.0-alpha/repository/deployment/server/eventpublishers/tokenRevocationJMSPublisherRegion2.xml","subPath":"tokenRevocationJMSPublisherRegion2.xml"},{"name":"cross-dc-publishers","mountPath":"/home/wso2carbon/wso2am-acp-4.7.0-alpha/repository/deployment/server/eventpublishers/keymgtEventJMSEventPublisherRegion2.xml","subPath":"keymgtEventJMSEventPublisherRegion2.xml"},{"name":"cross-dc-publishers","mountPath":"/home/wso2carbon/wso2am-acp-4.7.0-alpha/repository/deployment/server/eventpublishers/blockingEventJMSPublisherRegion2.xml","subPath":"blockingEventJMSPublisherRegion2.xml"},{"name":"cross-dc-publishers","mountPath":"/home/wso2carbon/wso2am-acp-4.7.0-alpha/repository/deployment/server/eventpublishers/asyncWebhooksEventPublisherRegion2.xml","subPath":"asyncWebhooksEventPublisherRegion2.xml"},{"name":"cross-dc-publishers","mountPath":"/home/wso2carbon/wso2am-acp-4.7.0-alpha/repository/conf/jndi-region2.properties","subPath":"jndi-region2.properties"}]'
+```
+
 ---
 
 ## Part 6: DNS Configuration
@@ -506,14 +542,25 @@ kubectl config use-context aks-apim-eus2 && kubectl get pods -n apim
 kubectl config use-context aks-apim-wus2 && kubectl get pods -n apim
 ```
 
-### 7.2 Access Publisher (via port-forward if no DNS)
+### 7.2 Access Publisher and DevPortal
+
+**Via ingress (recommended):** Configure DNS or `/etc/hosts` as described in Part 6, then:
+
+1. Visit `https://cp.eus2.apim.example.com/carbon` — **accept the self-signed certificate first**
+2. Visit `https://cp.eus2.apim.example.com/publisher` — login with `admin / admin`
+3. Visit `https://cp.eus2.apim.example.com/devportal`
+
+> **Important:** If you skip accepting the certificate at `/carbon`, Publisher and DevPortal will show a "Network Error" fail-whale page because their internal API calls fail the TLS check.
+
+**Via port-forward (fallback):** Note that `proxyPort: 443` is configured in the values files, so the CP generates redirect URLs pointing to port 443. To use port-forward, you must forward from port 443:
 
 ```bash
 # DC1
 kubectl config use-context aks-apim-eus2
-kubectl -n apim port-forward svc/wso2am-cp-service 9443:9443
+sudo kubectl -n apim port-forward svc/wso2am-cp-service 443:9443
 
-# Visit https://localhost:9443/publisher (admin / admin)
+# Visit https://localhost/publisher (admin / admin)
+# Note: requires sudo since port 443 is privileged
 ```
 
 ### 7.3 Test database replication
@@ -555,12 +602,12 @@ az aks delete --resource-group $RG --name aks-apim-wus2 --yes
 
 ### Per region
 
-| Component | Instances | CPU Request | Memory Request | Memory Limit |
-|-----------|-----------|-------------|----------------|--------------|
-| Control Plane | 2 | 1500m each | 4Gi each | 5Gi each |
-| Traffic Manager | 2 | 1500m each | 4Gi each | 5Gi each |
-| Gateway | 2 | 1500m each | 4Gi each | 5Gi each |
-| **Total** | **6** | **9000m** | **24Gi** | **30Gi** |
+| Component | Instances | CPU Request | CPU Limit | Memory Request/Limit |
+|-----------|-----------|-------------|-----------|---------------------|
+| Control Plane | 2 | 1500m each | 1800m each | 4Gi each |
+| Traffic Manager | 2 | 1500m each | 1800m each | 4Gi each |
+| Gateway | 2 | 1500m each | 1800m each | 4Gi each |
+| **Total** | **6** | **9000m** | **10800m** | **24Gi** |
 
 ### Node pool recommendation
 
@@ -578,8 +625,9 @@ az aks delete --resource-group $RG --name aks-apim-wus2 --yes
 | `distributed/traffic-manager/azure-values-dc2.yaml` | TM values for West US 2 |
 | `distributed/gateway/azure-values-dc1.yaml` | GW values for East US 2 |
 | `distributed/gateway/azure-values-dc2.yaml` | GW values for West US 2 |
-| `scripts/deploy-azure-dc1.sh` | Automated DC1 deployment |
-| `scripts/deploy-azure-dc2.sh` | Automated DC2 deployment |
+| `scripts/deploy-azure-dc1.sh` | Automated DC1 deployment (NGINX + APIM + ILB) |
+| `scripts/deploy-azure-dc2.sh` | Automated DC2 deployment (NGINX + APIM + ILB) |
+| `scripts/setup-cross-dc.sh` | Cross-DC event publisher setup (run after both DCs) |
 | `scripts/undeploy-azure.sh` | Teardown script |
 | `dbscripts/POSTGRES_PGLOGICAL_GUIDE.md` | Database replication setup |
 | `dbscripts/dc1/` | DC1 database scripts (sequences start 1, increment 2) |
@@ -610,6 +658,40 @@ kubectl exec $CP_POD -n apim -c wso2am-control-plane -- \
 ```bash
 kubectl get ingress -n apim
 kubectl describe ingress -n apim
+```
+
+### 502 Bad Gateway on Publisher/DevPortal login
+
+If you get a 502 on the OAuth callback URL (`/publisher/services/auth/callback/login?code=...`), check the NGINX ingress logs:
+```bash
+kubectl logs -n ingress-nginx -l app.kubernetes.io/component=controller --tail=20 | grep "502\|upstream\|error"
+```
+
+If you see `upstream sent too big header while reading response header from upstream`, the `proxy-buffer-size` in the CP ingress annotations is too small. The azure-values files set it to `16k`, which handles WSO2's large OAuth response headers. If you still see this error, increase it further (e.g., `32k`).
+
+### NGINX Ingress unreachable — connection timeout
+
+If the NGINX ingress external IP is assigned but `curl` times out, the Azure Load Balancer may be dropping traffic because health probes are failing.
+
+**Root cause:** With the default `externalTrafficPolicy=Cluster`, Azure LB health probes hit the NGINX NodePort on path `/`. NGINX returns `404` (no matching Host header), the LB treats this as unhealthy, and silently drops all inbound traffic.
+
+**Fix:** Ensure NGINX was installed with `--set controller.service.externalTrafficPolicy=Local` (see step 1.4). If it's already running:
+```bash
+helm upgrade ingress-nginx ingress-nginx/ingress-nginx \
+  --namespace ingress-nginx \
+  --set controller.replicaCount=2 \
+  --set controller.service.externalTrafficPolicy=Local
+```
+
+**Verify health probes are working:**
+```bash
+# Get the healthCheckNodePort
+kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.spec.healthCheckNodePort}'
+
+# Test from a node (should return 200)
+NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+HEALTH_PORT=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.spec.healthCheckNodePort}')
+curl -s -o /dev/null -w "%{http_code}" http://$NODE_IP:$HEALTH_PORT/healthz
 ```
 
 ### Cross-DC connectivity test
