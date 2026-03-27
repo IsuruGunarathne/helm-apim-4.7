@@ -1,0 +1,5 @@
+apiVersion: v2
+name: mcp-weather
+description: A minimal MCP server exposing a get_weather tool
+version: 0.1.0
+appVersion: "1.0.0"
