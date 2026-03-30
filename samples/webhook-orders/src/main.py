@@ -1,3 +1,4 @@
+import logging
 import os
 import random
 import string
@@ -7,6 +8,9 @@ from datetime import datetime, timezone
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Webhook Orders")
 
@@ -66,11 +70,19 @@ async def trigger():
 @app.post("/callback")
 async def callback(request: Request):
     body = await request.json()
+    received_at = datetime.now(timezone.utc).isoformat()
     deliveries.append({
-        "receivedAt": datetime.now(timezone.utc).isoformat(),
+        "receivedAt": received_at,
         "headers": dict(request.headers),
         "payload": body,
     })
+    logger.info("Webhook delivery received | event=%s orderId=%s customer=%s total=%s",
+                body.get("event", "unknown"),
+                body.get("orderId", "-"),
+                body.get("customer", "-"),
+                body.get("total", "-"))
+    logger.info("  Headers: %s", {k: v for k, v in request.headers.items() if k.lower() != "authorization"})
+    logger.info("  Payload: %s", body)
     return {"status": "received"}
 
 
