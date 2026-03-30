@@ -12,6 +12,14 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
+
+class HealthCheckFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return '"GET /health' not in record.getMessage()
+
+
+logging.getLogger("uvicorn.access").addFilter(HealthCheckFilter())
+
 app = FastAPI(title="Webhook Orders")
 
 HUB_URL = os.getenv("HUB_URL", "")
@@ -79,7 +87,11 @@ async def callback_verify(
     challenge = request.query_params.get("hub.challenge", "")
     topic = request.query_params.get("hub.topic", "")
     mode = request.query_params.get("hub.mode", "")
-    logger.info("Subscription verification | mode=%s topic=%s challenge=%s", mode, topic, challenge)
+    logger.info("--- Subscription Verification ---")
+    logger.info("  Mode:      %s", mode)
+    logger.info("  Topic:     %s", topic)
+    logger.info("  Challenge: %s", challenge)
+    logger.info("---------------------------------")
     return PlainTextResponse(content=challenge)
 
 
@@ -92,13 +104,14 @@ async def callback(request: Request):
         "headers": dict(request.headers),
         "payload": body,
     })
-    logger.info("Webhook delivery received | event=%s orderId=%s customer=%s total=%s",
-                body.get("event", "unknown"),
-                body.get("orderId", "-"),
-                body.get("customer", "-"),
-                body.get("total", "-"))
-    logger.info("  Headers: %s", {k: v for k, v in request.headers.items() if k.lower() != "authorization"})
-    logger.info("  Payload: %s", body)
+    logger.info("=== Webhook Delivery Received ===")
+    logger.info("  Event:    %s", body.get("event", "unknown"))
+    logger.info("  Order:    %s", body.get("orderId", "-"))
+    logger.info("  Customer: %s", body.get("customer", "-"))
+    logger.info("  Total:    %s", body.get("total", "-"))
+    logger.info("  Headers:  %s", {k: v for k, v in request.headers.items() if k.lower() != "authorization"})
+    logger.info("  Payload:  %s", body)
+    logger.info("=================================")
     return {"status": "received"}
 
 

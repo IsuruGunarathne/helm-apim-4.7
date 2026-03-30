@@ -187,7 +187,7 @@ curl -sk -X POST 'https://gw.eus2.apim.example.com/order-events/1.0.0' \
 ```bash
 curl -sk -X POST 'https://gw.eus2.apim.example.com/order-events/1.0.0' \
   -H 'Content-Type: application/x-www-form-urlencoded' \
-  -H 'Authorization: Bearer eyJ4NXQiOiJWazdLelF1SDh3ZW1uTEx0ZkR4RFBENXFrX1UiLCJraWQiOiJNalF6WldVNE5qTXpZakUxTm1ZeE1HUTFZV1k0WkdNeFpqVXdaV1V6WTJGa1ptTXpNelpoWXpVNU16QmhNMlF6WlRVelpqYzNPVFExTjJJeU5UWmpNd19SUzI1NiIsInR5cCI6ImF0K2p3dCIsImFsZyI6IlJTMjU2In0.eyJzdWIiOiJwVmxvZTVIMXlsZlBWSDRvUXpncndJMEtTbUFhIiwiYXV0IjoiQVBQTElDQVRJT04iLCJpc3MiOiJodHRwczovL2FwaS5hc2dhcmRlby5pby90L2lzdHZlbnRlcnByaXNlcy9vYXV0aDIvdG9rZW4iLCJjbGllbnRfaWQiOiJwVmxvZTVIMXlsZlBWSDRvUXpncndJMEtTbUFhIiwiYXVkIjoicFZsb2U1SDF5bGZQVkg0b1F6Z3J3STBLU21BYSIsIm5iZiI6MTc3NDg1MTE4MCwiYXpwIjoicFZsb2U1SDF5bGZQVkg0b1F6Z3J3STBLU21BYSIsIm9yZ19pZCI6ImJmNmQxOTRmLTk2ZDMtNGUxZC05MTZjLTk3NzcyYWYxMTgwYiIsImV4cCI6MTc3NDg1NDc4MCwib3JnX25hbWUiOiJpc3R2ZW50ZXJwcmlzZXMiLCJpYXQiOjE3NzQ4NTExODAsImp0aSI6IjJjNTBmNmRjLThlNTktNGNiMy1hODNjLTYzOTU5NjgxOThmMyIsIm9yZ19oYW5kbGUiOiJpc3R2ZW50ZXJwcmlzZXMifQ.M0-BnUKq7OTKTnbIaqoGOUcLdciAa2uX1_U6L3E9GICOrwSX-isWRN2uYWZIX5vnD5HGBEa4_l0lRuhdfSeXAb-qPrVwgwo9irzJhSEJeUgzDCgAD5bUOXKxkkfKSPVCXXKkqEe-dlJc1oZ5Vu-_rJ-w7iEVrc7aLJcdEEMsvxd7wZbXQkEm4S2CbvBS2Lg3-rDlrL3MZnCZemH7ijphsdrBzjkO8ldOjyBTI56KQbEU178Cp13XsmNKr69n_rY6bJ8BgIlcdSbHaNpNycQWVBC2qzgSYqxiGwWGwN0lG7zqJATdcTCUO902KhZCiP9BOL47myet_Un-Zx4mQAK6yQ' \
+  -H 'Authorization: Bearer <ACCESS_TOKEN>' \
   -d 'hub.topic=/order_delivered' \
   -d 'hub.callback=http%3A%2F%2Fwebhook-orders.apim.svc%3A8000%2Fcallback' \
   -d 'hub.mode=subscribe' \
