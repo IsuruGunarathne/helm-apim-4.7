@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 import httpx
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -69,6 +69,18 @@ async def trigger():
                 status_code=502,
                 content={"message": f"Failed to reach hub: {e}", "event": event},
             )
+
+
+@app.get("/callback")
+async def callback_verify(
+    request: Request,
+):
+    """WebSub subscriber verification of intent — return hub.challenge to confirm subscription."""
+    challenge = request.query_params.get("hub.challenge", "")
+    topic = request.query_params.get("hub.topic", "")
+    mode = request.query_params.get("hub.mode", "")
+    logger.info("Subscription verification | mode=%s topic=%s challenge=%s", mode, topic, challenge)
+    return PlainTextResponse(content=challenge)
 
 
 @app.post("/callback")
