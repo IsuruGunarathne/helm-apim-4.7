@@ -56,10 +56,14 @@ async def trigger():
             content={"message": "HUB_URL not configured — event generated but not sent", "event": event},
         )
 
+    topic = f"/{event['event']}"
+    url = f"{HUB_URL.rstrip('/')}/webhooks_events_receiver_resource?topic={topic}"
+    logger.info("Publishing event to hub | topic=%s url=%s", topic, url)
+
     async with httpx.AsyncClient(verify=False) as client:
         try:
-            resp = await client.post(HUB_URL, json=event, timeout=10)
-            return {"message": "Event sent to hub", "hubStatus": resp.status_code, "event": event}
+            resp = await client.post(url, json=event, timeout=10)
+            return {"message": "Event sent to hub", "hubStatus": resp.status_code, "topic": topic, "event": event}
         except httpx.RequestError as e:
             return JSONResponse(
                 status_code=502,

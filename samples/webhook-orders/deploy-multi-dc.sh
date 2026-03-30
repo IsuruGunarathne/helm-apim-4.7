@@ -7,9 +7,9 @@ NAMESPACE="apim"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CHART_DIR="$SCRIPT_DIR/chart"
 
-# APIM WebSub hub endpoint per DC — update these to match your deployment
-DC1_HUB_URL="https://websub.eus2.apim.example.com/webhook/notify"
-DC2_HUB_URL="https://websub.wus2.apim.example.com/webhook/notify"
+# APIM WebSub hub endpoint per DC — update to match your API context/version
+DC1_HUB_URL="https://websub.eus2.apim.example.com/order-events/1.0.0"
+DC2_HUB_URL="https://websub.wus2.apim.example.com/order-events/1.0.0"
 
 echo "=== Webhook Orders — Multi-DC Deployment ==="
 echo ""

@@ -79,20 +79,27 @@ curl http://localhost:8000/deliveries
 
 ### Configure the Hub URL
 
-`HUB_URL` is the APIM WebSub endpoint this server POSTs events to when `/trigger` is called. It flows through the stack like this:
+`HUB_URL` is the base APIM WebSub endpoint. When `/trigger` is called, the server appends `/webhooks_events_receiver_resource?topic=/<event_type>` automatically and POSTs the event there.
+
+It flows through the stack like this:
 
 1. **`deploy-multi-dc.sh`** sets it per DC at install time via `--set env.hubUrl=<url>`
 2. **Helm** injects it as a `HUB_URL` environment variable into the container
-3. **`main.py`** reads it with `os.getenv("HUB_URL", "")`
+3. **`main.py`** reads it, appends the topic-specific receiver path, and POSTs events
 
 Update the placeholder values in `deploy-multi-dc.sh` before deploying:
 
 ```bash
-DC1_HUB_URL="https://websub.eus2.apim.example.com/webhook/notify"
-DC2_HUB_URL="https://websub.wus2.apim.example.com/webhook/notify"
+DC1_HUB_URL="https://websub.eus2.apim.example.com/order-events/1.0.0"
+DC2_HUB_URL="https://websub.wus2.apim.example.com/order-events/1.0.0"
 ```
 
-> The WebSub hub runs on port 8021 of the APIM gateway. The exact URL depends on your ingress setup. If no dedicated websub ingress exists, use `https://gw.eus2.apim.example.com:8021/webhook/notify`.
+The full URL that gets called looks like:
+```
+https://websub.eus2.apim.example.com/order-events/1.0.0/webhooks_events_receiver_resource?topic=/order_created
+```
+
+> The WebSub receiver runs on port 9021 (HTTP) / 8021 (HTTPS) of the APIM gateway. If no dedicated websub ingress exists, use `https://gw.eus2.apim.example.com:8021/order-events/1.0.0`.
 
 If `HUB_URL` is not set, `/trigger` still generates an event but logs a warning instead of sending it — useful for local testing.
 
@@ -112,42 +119,103 @@ kubectl get pods -n apim -l app.kubernetes.io/name=webhook-orders
 
 ## Test with WSO2 APIM
 
-### Step 1 — Create a WebHook API
+### Step 1 — Create a WebSub Streaming API (Publisher)
 
 1. Open Publisher: `https://cp.eus2.apim.example.com/publisher`
-2. Click **Create API** > **WebHook**
-3. Set:
+2. Click **Create API** > **Streaming API** > **WebSub/WebHook API**
+3. Fill in:
    - Name: `OrderEvents`
    - Context: `/order-events`
    - Version: `1.0.0`
-4. Under **Topics**, add topics: `order_created`, `order_shipped`, `order_delivered`
-5. Set endpoint: `http://webhook-orders.apim.svc:8000`
-6. Deploy and Publish
+4. Go to **API Configurations** > **Runtime** and set the endpoint:
+   ```
+   http://webhook-orders.apim.svc:8000
+   ```
+5. Go to **API Configurations** > **Topics** and add three topics:
 
-### Step 2 — Subscribe with the callback URL
+   | Type | Channel Address | Operation Name |
+   |------|-----------------|----------------|
+   | receive | `/order_created` | `order_created` |
+   | receive | `/order_shipped` | `order_shipped` |
+   | receive | `/order_delivered` | `order_delivered` |
+
+   For each: fill in Channel Address and Operation Name, then click **`+`** to add the next. Click **Save** when done.
+
+6. (Optional) Expand **Subscription Configuration** on the Topics page > click **Enable** to enable secret generation > select **SHA1** as the signing algorithm > **Generate** a secret. Copy and save it for Step 3.
+7. Go to **Portal Configurations** > **Subscriptions** > select the **AsyncWHGold** business plan > **Save**
+8. Go to **Lifecycle** > click **Publish**
+9. Go to **Deployments** > click **Deploy New Revision** > select **Production and Sandbox** > **Deploy**
+
+### Step 2 — Create Application & Get Access Token (DevPortal)
 
 1. Open DevPortal: `https://cp.eus2.apim.example.com/devportal`
-2. Find **OrderEvents** API > Subscribe
-3. When prompted for a callback URL, enter:
-   ```
-   http://webhook-orders.apim.svc:8000/callback
-   ```
-4. Select topic(s) and confirm
+2. Go to **Applications** > **Add New Application** > name it `OrderEventsApp` > **Save**
+   (Or use the `DefaultApplication`)
+3. Find the **OrderEvents** API > click **Subscribe** > select your application > click **Subscribe**
+4. Go to **Applications** > `OrderEventsApp` > **Production Keys** > **Generate Keys**
+5. Copy the **Access Token** — you'll need it for the subscribe curl
 
-### Step 3 — Trigger an event
+### Step 3 — Subscribe to a topic via curl
+
+WebSub subscriptions use a POST with `application/x-www-form-urlencoded` hub parameters to the **regular gateway** endpoint (not the websub port):
+
+```bash
+curl -sk -X POST 'https://gw.eus2.apim.example.com/order-events/1.0.0' \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  -H 'Authorization: Bearer <ACCESS_TOKEN>' \
+  -d 'hub.topic=/order_created' \
+  -d 'hub.callback=http%3A%2F%2Fwebhook-orders.apim.svc%3A8000%2Fcallback' \
+  -d 'hub.mode=subscribe' \
+  -d 'hub.secret=mysecret' \
+  -d 'hub.lease_seconds=50000000'
+```
+
+> **Note:** `hub.callback` must be URL-encoded. The value above is `http://webhook-orders.apim.svc:8000/callback` encoded.
+
+> **Quick test alternative:** Use [webhook.site](https://webhook.site) to get a disposable callback URL — URL-encode it and use as `hub.callback` to verify events arrive without needing the callback server.
+
+### Step 4 — Trigger an event
+
+Port-forward and call `/trigger` to generate a random order event and POST it to the hub:
 
 ```bash
 kubectl -n apim port-forward svc/webhook-orders 8000:8000
 curl -X POST http://localhost:8000/trigger
 ```
 
-### Step 4 — Verify delivery
+The server generates a random order event (e.g., `order_created`) and POSTs it to:
+```
+{HUB_URL}/webhooks_events_receiver_resource?topic=/order_created
+```
+APIM receives the event on the websub port and delivers it to all subscribers registered for that topic.
+
+### Step 5 — Verify delivery
+
+Check received deliveries via the API:
 
 ```bash
 curl http://localhost:8000/deliveries
 ```
 
-You should see the event that APIM forwarded to the callback endpoint.
+Or watch the pod logs in real time:
+
+```bash
+kubectl logs -n apim -l app.kubernetes.io/name=webhook-orders -f
+```
+
+You should see the event logged with its order ID, customer, and total as APIM delivers it to the callback.
+
+### Optional — Unsubscribe from a topic
+
+```bash
+curl -sk -X POST 'https://gw.eus2.apim.example.com/order-events/1.0.0' \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  -H 'Authorization: Bearer <ACCESS_TOKEN>' \
+  -d 'hub.topic=/order_created' \
+  -d 'hub.callback=http%3A%2F%2Fwebhook-orders.apim.svc%3A8000%2Fcallback' \
+  -d 'hub.mode=unsubscribe' \
+  -d 'hub.secret=mysecret'
+```
 
 ---
 
