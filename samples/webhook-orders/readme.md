@@ -77,7 +77,26 @@ curl http://localhost:8000/deliveries
 
 ## Deploy (Kubernetes)
 
-Update the hub URLs in `deploy-multi-dc.sh` to match your APIM WebSub endpoints, then:
+### Configure the Hub URL
+
+`HUB_URL` is the APIM WebSub endpoint this server POSTs events to when `/trigger` is called. It flows through the stack like this:
+
+1. **`deploy-multi-dc.sh`** sets it per DC at install time via `--set env.hubUrl=<url>`
+2. **Helm** injects it as a `HUB_URL` environment variable into the container
+3. **`main.py`** reads it with `os.getenv("HUB_URL", "")`
+
+Update the placeholder values in `deploy-multi-dc.sh` before deploying:
+
+```bash
+DC1_HUB_URL="https://websub.eus2.apim.example.com/webhook/notify"
+DC2_HUB_URL="https://websub.wus2.apim.example.com/webhook/notify"
+```
+
+> The WebSub hub runs on port 8021 of the APIM gateway. The exact URL depends on your ingress setup. If no dedicated websub ingress exists, use `https://gw.eus2.apim.example.com:8021/webhook/notify`.
+
+If `HUB_URL` is not set, `/trigger` still generates an event but logs a warning instead of sending it — useful for local testing.
+
+Then:
 
 ```bash
 ./samples/webhook-orders/deploy-multi-dc.sh
