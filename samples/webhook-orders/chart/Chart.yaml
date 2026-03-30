@@ -1,0 +1,5 @@
+apiVersion: v2
+name: webhook-orders
+description: WebHook/WebSub order event publisher and callback receiver for WSO2 APIM
+version: 0.1.0
+appVersion: "1.0.0"

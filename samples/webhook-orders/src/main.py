@@ -1,0 +1,79 @@
+import os
+import random
+import string
+from collections import deque
+from datetime import datetime, timezone
+
+import httpx
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+
+app = FastAPI(title="Webhook Orders")
+
+HUB_URL = os.getenv("HUB_URL", "")
+
+CUSTOMERS = ["Alice Johnson", "Bob Smith", "Carol White", "David Lee", "Emma Brown"]
+SKUS = ["PROD-101", "PROD-202", "PROD-303", "PROD-404", "PROD-505"]
+EVENT_TYPES = ["order_created", "order_shipped", "order_delivered"]
+
+deliveries: deque = deque(maxlen=20)
+
+
+def random_order_id() -> str:
+    return "ORD-" + "".join(random.choices(string.digits, k=4))
+
+
+def generate_event() -> dict:
+    qty = random.randint(1, 5)
+    price = round(random.uniform(9.99, 99.99), 2)
+    sku = random.choice(SKUS)
+    return {
+        "event": random.choice(EVENT_TYPES),
+        "orderId": random_order_id(),
+        "customer": random.choice(CUSTOMERS),
+        "items": [{"sku": sku, "qty": qty, "price": price}],
+        "total": round(qty * price, 2),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
+@app.post("/trigger")
+async def trigger():
+    event = generate_event()
+
+    if not HUB_URL:
+        return JSONResponse(
+            status_code=200,
+            content={"message": "HUB_URL not configured — event generated but not sent", "event": event},
+        )
+
+    async with httpx.AsyncClient(verify=False) as client:
+        try:
+            resp = await client.post(HUB_URL, json=event, timeout=10)
+            return {"message": "Event sent to hub", "hubStatus": resp.status_code, "event": event}
+        except httpx.RequestError as e:
+            return JSONResponse(
+                status_code=502,
+                content={"message": f"Failed to reach hub: {e}", "event": event},
+            )
+
+
+@app.post("/callback")
+async def callback(request: Request):
+    body = await request.json()
+    deliveries.append({
+        "receivedAt": datetime.now(timezone.utc).isoformat(),
+        "headers": dict(request.headers),
+        "payload": body,
+    })
+    return {"status": "received"}
+
+
+@app.get("/deliveries")
+async def get_deliveries():
+    return {"count": len(deliveries), "deliveries": list(reversed(deliveries))}
