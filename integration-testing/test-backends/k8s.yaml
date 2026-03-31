@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-backends
+  namespace: apim
+  labels:
+    app: test-backends
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: test-backends
+  template:
+    metadata:
+      labels:
+        app: test-backends
+    spec:
+      containers:
+        - name: tomcat
+          image: isurugunarathne/apim-test-backends:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: test-backends
+  namespace: apim
+  labels:
+    app: test-backends
+spec:
+  type: ClusterIP
+  selector:
+    app: test-backends
+  ports:
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP
