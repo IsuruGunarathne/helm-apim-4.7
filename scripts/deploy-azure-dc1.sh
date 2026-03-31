@@ -58,10 +58,29 @@ kubectl get namespace "$NAMESPACE" &>/dev/null || {
 }
 
 # -------------------------------------------------------
-# 3. Deploy Control Plane (HA — 2 instances)
+# 3. Create TLS Secret for Ingress
 # -------------------------------------------------------
 echo ""
-echo "--- [3/5] Deploying Control Plane (HA) ---"
+echo "--- [3] Creating TLS Secret for Ingress ---"
+if kubectl get secret apim-ingress-tls -n "$NAMESPACE" &>/dev/null; then
+    echo "TLS secret already exists, skipping."
+else
+    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+        -keyout /tmp/apim-tls.key -out /tmp/apim-tls.crt \
+        -subj "/CN=apim.example.com" \
+        -addext "subjectAltName=DNS:cp.eus2.apim.example.com,DNS:gw.eus2.apim.example.com" 2>/dev/null
+    kubectl create secret tls apim-ingress-tls \
+        --cert=/tmp/apim-tls.crt --key=/tmp/apim-tls.key \
+        -n "$NAMESPACE"
+    rm -f /tmp/apim-tls.key /tmp/apim-tls.crt
+    echo "TLS secret created."
+fi
+
+# -------------------------------------------------------
+# 4. Deploy Control Plane (HA — 2 instances)
+# -------------------------------------------------------
+echo ""
+echo "--- [4/6] Deploying Control Plane (HA) ---"
 helm install cp "$REPO_DIR/distributed/control-plane" -n "$NAMESPACE" \
     -f "$REPO_DIR/distributed/control-plane/azure-values-dc1.yaml"
 
@@ -70,10 +89,10 @@ kubectl wait --for=condition=ready pod -l deployment=wso2am-cp -n "$NAMESPACE" -
 echo "Control Plane ready."
 
 # -------------------------------------------------------
-# 4. Deploy Traffic Manager (HA — 2 instances)
+# 5. Deploy Traffic Manager (HA — 2 instances)
 # -------------------------------------------------------
 echo ""
-echo "--- [4/5] Deploying Traffic Manager (HA) ---"
+echo "--- [5/6] Deploying Traffic Manager (HA) ---"
 helm install tm "$REPO_DIR/distributed/traffic-manager" -n "$NAMESPACE" \
     -f "$REPO_DIR/distributed/traffic-manager/azure-values-dc1.yaml"
 
@@ -82,10 +101,10 @@ kubectl wait --for=condition=ready pod -l deployment=wso2am-tm -n "$NAMESPACE" -
 echo "Traffic Manager ready."
 
 # -------------------------------------------------------
-# 5. Deploy Gateway (2 replicas)
+# 6. Deploy Gateway (2 replicas)
 # -------------------------------------------------------
 echo ""
-echo "--- [5/5] Deploying Gateway ---"
+echo "--- [6/6] Deploying Gateway ---"
 helm install gw "$REPO_DIR/distributed/gateway" -n "$NAMESPACE" \
     -f "$REPO_DIR/distributed/gateway/azure-values-dc1.yaml"
 
@@ -94,10 +113,10 @@ kubectl wait --for=condition=ready pod -l deployment=wso2am-gw -n "$NAMESPACE" -
 echo "Gateway ready."
 
 # -------------------------------------------------------
-# 6. Create Internal Load Balancer for cross-DC access
+# 7. Create Internal Load Balancer for cross-DC access
 # -------------------------------------------------------
 echo ""
-echo "--- [6] Creating Internal Load Balancer for CP (cross-DC) ---"
+echo "--- [7] Creating Internal Load Balancer for CP (cross-DC) ---"
 kubectl apply -n "$NAMESPACE" -f - <<'EOF'
 apiVersion: v1
 kind: Service
@@ -139,6 +158,10 @@ echo ""
 kubectl get pods -n "$NAMESPACE"
 echo ""
 echo "Expected: 6 pods (CP-1, CP-2, TM-1, TM-2, GW-1, GW-2)"
+echo ""
+
+echo "TLS Secret:"
+kubectl get secret apim-ingress-tls -n "$NAMESPACE" 2>/dev/null && echo "  apim-ingress-tls (OK)" || echo "  (not found)"
 echo ""
 
 echo "Ingress:"

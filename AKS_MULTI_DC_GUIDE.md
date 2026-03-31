@@ -240,6 +240,15 @@ kubectl config use-context aks-apim-eus2
 # Create namespace
 kubectl create namespace apim
 
+# Create TLS secret for ingress (self-signed, covers both CP and GW hostnames)
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+    -keyout /tmp/apim-tls.key -out /tmp/apim-tls.crt \
+    -subj "/CN=apim.example.com" \
+    -addext "subjectAltName=DNS:cp.eus2.apim.example.com,DNS:gw.eus2.apim.example.com"
+kubectl create secret tls apim-ingress-tls \
+    --cert=/tmp/apim-tls.crt --key=/tmp/apim-tls.key -n apim
+rm -f /tmp/apim-tls.key /tmp/apim-tls.crt
+
 # Deploy Control Plane (HA — 2 instances)
 helm install cp ./distributed/control-plane -n apim \
     -f distributed/control-plane/azure-values-dc1.yaml
@@ -292,10 +301,19 @@ kubectl config use-context aks-apim-wus2
 
 ### 4.2 Manual deployment
 
-Same as DC1 but with `azure-values-dc2.yaml` files:
+Same as DC1 but with DC2 hostnames and `azure-values-dc2.yaml` files:
 
 ```bash
 kubectl create namespace apim
+
+# Create TLS secret for ingress (DC2 hostnames)
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+    -keyout /tmp/apim-tls.key -out /tmp/apim-tls.crt \
+    -subj "/CN=apim.example.com" \
+    -addext "subjectAltName=DNS:cp.wus2.apim.example.com,DNS:gw.wus2.apim.example.com"
+kubectl create secret tls apim-ingress-tls \
+    --cert=/tmp/apim-tls.crt --key=/tmp/apim-tls.key -n apim
+rm -f /tmp/apim-tls.key /tmp/apim-tls.crt
 
 helm install cp ./distributed/control-plane -n apim \
     -f distributed/control-plane/azure-values-dc2.yaml
@@ -549,11 +567,11 @@ kubectl config use-context aks-apim-wus2 && kubectl get pods -n apim
 
 **Via ingress (recommended):** Configure DNS or `/etc/hosts` as described in Part 6, then:
 
-1. Visit `https://cp.eus2.apim.example.com/carbon` — **accept the self-signed certificate first**
+1. Visit `https://cp.eus2.apim.example.com/carbon` — accept the self-signed certificate
 2. Visit `https://cp.eus2.apim.example.com/publisher` — login with `admin / admin`
 3. Visit `https://cp.eus2.apim.example.com/devportal`
 
-> **Important:** If you skip accepting the certificate at `/carbon`, Publisher and DevPortal will show a "Network Error" fail-whale page because their internal API calls fail the TLS check.
+> **Note:** The deploy scripts generate a self-signed TLS certificate with the correct SANs (matching the configured hostnames). Your browser will still show a certificate warning, but the cert will match the hostname. You must accept the cert at `/carbon` first — otherwise Publisher and DevPortal will show a "Network Error" fail-whale page because their internal API calls fail the TLS check.
 
 **Via port-forward (fallback):** Note that `proxyPort: 443` is configured in the values files, so the CP generates redirect URLs pointing to port 443. To use port-forward, you must forward from port 443:
 

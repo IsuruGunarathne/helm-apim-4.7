@@ -11,6 +11,7 @@ kubernetes:
   gatewayAPI:
     enabled: false
   ingress:
+    tlsSecret: "apim-ingress-tls"
     controlPlane:
       enabled: true
       hostname: "cp.wus2.apim.example.com"
