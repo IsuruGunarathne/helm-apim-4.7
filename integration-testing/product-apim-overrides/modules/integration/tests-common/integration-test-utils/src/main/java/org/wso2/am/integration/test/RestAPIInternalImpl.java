@@ -1,0 +1,64 @@
+package org.wso2.am.integration.test;
+
+import org.wso2.am.integration.clients.internal.ApiClient;
+import org.wso2.am.integration.clients.internal.ApiException;
+import org.wso2.am.integration.clients.internal.api.RetrievingWebhooksSubscriptionsApi;
+import org.wso2.am.integration.clients.internal.api.RevokeJwt_Api;
+import org.wso2.am.integration.clients.internal.api.SubscriptionValidationApi;
+import org.wso2.am.integration.clients.internal.api.dto.ApplicationListDTO;
+import org.wso2.am.integration.clients.internal.api.dto.RevokedEventsDTO;
+import org.wso2.am.integration.clients.internal.api.dto.WebhooksSubscriptionsListDTO;
+
+import javax.xml.bind.DatatypeConverter;
+import java.nio.charset.StandardCharsets;
+
+public class RestAPIInternalImpl {
+    RevokeJwt_Api revokedListAPI = new RevokeJwt_Api();
+    ApiClient apiClient = new ApiClient();
+    RetrievingWebhooksSubscriptionsApi webhooksSubscriptionsApi = new RetrievingWebhooksSubscriptionsApi();
+    SubscriptionValidationApi subscriptionValidationApi = new SubscriptionValidationApi();
+    String tenantDomain;
+
+    public RestAPIInternalImpl(String username, String password, String tenantDomain) {
+        this(username, password, tenantDomain, "https://localhost:9943/");
+    }
+
+    public RestAPIInternalImpl(String username, String password, String tenantDomain, String baseUrl) {
+        String basicEncoded =
+                DatatypeConverter.printBase64Binary((username + ':' + password).getBytes(StandardCharsets.UTF_8));
+        apiClient.addDefaultHeader("Authorization", "Basic " + basicEncoded);
+        apiClient.setDebugging(true);
+        apiClient.setBasePath(baseUrl + "internal/data/v1");
+        apiClient.setReadTimeout(600000);
+        apiClient.setConnectTimeout(600000);
+        apiClient.setWriteTimeout(600000);
+        revokedListAPI.setApiClient(apiClient);
+        this.tenantDomain = tenantDomain;
+        webhooksSubscriptionsApi.setApiClient(apiClient);
+        subscriptionValidationApi.setApiClient(apiClient);
+    }
+
+    public RevokedEventsDTO retrieveRevokedList() throws ApiException {
+        return revokedListAPI.revokedjwtGet();
+    }
+
+    public WebhooksSubscriptionsListDTO retrieveWebhooksSubscriptions() throws ApiException {
+        return webhooksSubscriptionsApi.webhooksSubscriptionsGet(tenantDomain);
+    }
+
+    public ApplicationListDTO getApplications(String xWSO2Tenant, Integer appId) throws ApiException {
+        return subscriptionValidationApi.applicationsGet(xWSO2Tenant, appId);
+    }
+
+    public int getApplicationIdByUUID(String tenantDomain, String appUUID) throws ApiException {
+        ApplicationListDTO applicationListDTO = subscriptionValidationApi.applicationsGet(tenantDomain, null);
+        if (applicationListDTO != null && applicationListDTO.getList() != null) {
+            return applicationListDTO.getList().stream()
+                    .filter(app -> appUUID.equals(app.getUuid()))
+                    .mapToInt(app -> app.getId())
+                    .findFirst()
+                    .orElse(0);
+        }
+        return -1;
+    }
+}

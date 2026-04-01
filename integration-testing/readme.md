@@ -5,24 +5,33 @@ This guide explains how to run the product-apim integration tests against the di
 ## Architecture
 
 ```
-Your Mac (test runner)                    AKS Cluster
-┌─────────────────────┐         ┌──────────────────────────────┐
-│  mvn test           │         │                              │
-│  (Publisher client)─┼──443──> │  CP ingress -> control-plane │
-│  (Store client)─────┼──443──> │                              │
-│  (Gateway client)───┼──443──> │  GW ingress -> gateway       │
-│                     │         │                              │
-│                     │         │  gateway ──8080──> test-backends (Tomcat)
-│                     │         │            (17 WAR files)     │
-└─────────────────────┘         └──────────────────────────────┘
+Your Mac (test runner)                         AKS Cluster (DC1: aks-apim-eus2)
+┌──────────────────────────┐         ┌──────────────────────────────────┐
+│  mvn test                │         │                                  │
+│                          │         │  CP pod (wso2am-cp-service)      │
+│  REST API clients ───────┼─9763──> │    port-forward HTTP  -> :9763   │
+│  (Publisher/Store/Admin) │         │                                  │
+│                          │         │  CP pod (SOAP/login)             │
+│  SOAP admin clients ─────┼─19443─> │    port-forward HTTPS -> :9443   │
+│  (LoginLogoutClient,     │         │                                  │
+│   UserManagement, etc.)  │         │  Gateway (ingress)               │
+│                          │         │    gw.eus2.apim.example.com:443  │
+│  Gateway API calls ──────┼──443──> │                                  │
+│                          │         │  test-backends.apim.svc:8080     │
+│                          │         │    (17 WAR files in Tomcat)      │
+└──────────────────────────┘         └──────────────────────────────────┘
 ```
 
-The test framework runs on your Mac, connects to APIM via ingress (HTTPS/443). When tests create APIs, they set the backend endpoint to `http://test-backends.apim.svc:8080/...` — the gateway resolves this cluster-internally.
+**Two port-forwards are needed:**
+- **9763 (HTTP)** — REST API calls (Publisher, DevPortal, Admin, KeyManager, OAuth token endpoints). Our modified code routes these through `getWebAppURL()` which returns HTTP URLs.
+- **19443 -> 9443 (HTTPS)** — SOAP admin calls (login, user management, tenant management). The carbon-automation library's `LoginLogoutClient` hardcodes `getBackEndUrl()` which always returns HTTPS. We can't modify that JAR, so we port-forward HTTPS too.
+
+Port 19443 (not 9443) is used because Rancher Desktop's `steve` process occupies IPv4:9443, causing kubectl port-forward to bind IPv6 only, which Java can't connect to.
 
 ## Prerequisites
 
 - Docker Desktop with buildx (for building the test-backends image)
-- Maven 3.8+, JDK 17
+- Maven 3.8+, JDK 17 or 21
 - `kubectl` configured with AKS contexts (`aks-apim-eus2`, `aks-apim-wus2`)
 - APIM deployed on both DCs
 
@@ -56,56 +65,100 @@ kubectl -n apim exec deploy/wso2am-gw-deployment -- \
 
 You should get a customer XML response.
 
-## Step 2 — Build Test Dependencies
+## Step 2 — Apply Test Framework Overrides
 
-The test modules depend on `tests-common` (REST API clients, utils, framework extensions) which are `4.7.0-SNAPSHOT` artifacts not in public Maven repos. Build them first:
+The product-apim test framework assumes a local all-in-one server. We've modified 13 files to make it work against a distributed AKS deployment. These overrides are stored in `product-apim-overrides/`.
+
+### Apply with script (recommended)
+
+```bash
+cd integration-testing
+./apply-overrides.sh
+```
+
+This copies all override files into `product-apim/all-in-one-apim/` and rebuilds the `tests-common` module.
+
+### What the overrides change
+
+| File | Change |
+|------|--------|
+| `ClientAuthenticator.java` | Auto-DCR when token map is empty; handles both HTTP and HTTPS URLs |
+| `RestAPIInternalImpl.java` | Configurable base URL (was hardcoded `localhost:9943`) |
+| `RestAPIGatewayImpl.java` | Configurable base URL (was hardcoded `localhost:9943`) |
+| `RestAPIPublisherImpl.java` | Passes publisher URL to gateway client |
+| `RestAPIServiceCatalogImpl.java` | Configurable base URL (was hardcoded `localhost:9943`) |
+| `RestAPIStoreImpl.java` | Passes store URL to gateway client |
+| `APIMIntegrationBaseTest.java` | `getHttpBackendUrl()` helper; passes URLs to all REST API impls |
+| `LoginLogoutClient.java` | Uses `getWebAppURL()` (HTTP) instead of `getBackEndUrl()` (HTTPS) |
+| `APIMURLBean.java` | `webAppURLHttps` built from `getWebAppURL()` (HTTP) |
+| `pom.xml` | Platform profile: truststore JVM args, `disableVerification=true` |
+| `automation.xml` | CP ports: http=9763, https=19443; removed invalid userStoreUser |
+| `wso2carbon.jks` | Imported `dynamiclistener-ca` EC cert for HTTPS port-forward |
+| `platform-test-host-config.xsl` | Port-type-specific XSL templates for dual port-forward |
+
+## Step 3 — Start Port-Forwards
+
+Open **two** terminals (or use `&` to background):
+
+```bash
+# Terminal 1: HTTP (REST APIs, OAuth tokens)
+kubectl port-forward svc/wso2am-cp-service 9763:9763 -n apim --context aks-apim-eus2
+
+# Terminal 2: HTTPS (SOAP admin services — LoginLogoutClient, UserPopulator)
+kubectl port-forward svc/wso2am-cp-service 19443:9443 -n apim --context aks-apim-eus2
+```
+
+Or as background processes:
+
+```bash
+kubectl port-forward svc/wso2am-cp-service 9763:9763 -n apim --context aks-apim-eus2 &
+kubectl port-forward svc/wso2am-cp-service 19443:9443 -n apim --context aks-apim-eus2 &
+```
+
+### Verify both work
+
+```bash
+# HTTP
+curl -s http://localhost:9763/services/AuthenticationAdmin?wsdl | head -1
+
+# HTTPS
+curl -sk https://localhost:19443/services/AuthenticationAdmin?wsdl | head -1
+```
+
+Both should return XML starting with `<wsdl:definitions`.
+
+## Step 4 — Run Integration Tests
+
+### Configuration
+
+The `platform-test-host-config.xsl` transforms `automation.xml` with:
+
+| Instance | Hostname | HTTP Port | HTTPS Port | Connection |
+|----------|----------|-----------|------------|------------|
+| store-old (DevPortal) | `localhost` | 9763 | 19443 | port-forward |
+| publisher-old | `localhost` | 9763 | 19443 | port-forward |
+| keyManager | `localhost` | 9763 | 19443 | port-forward |
+| gateway-mgt | `localhost` | 9763 | 19443 | port-forward |
+| gateway-wrk | `gw.eus2.apim.example.com` | 443 | 443 | ingress (HTTPS) |
+| backend-server | `test-backends.apim.svc` | 8080 | 8080 | cluster-internal |
+
+If your gateway hostname differs, edit `platform-test-host-config.xsl` in the overrides and re-apply.
+
+### Run a specific test group
 
 ```bash
 cd product-apim/all-in-one-apim
 
-# Build tests-common modules (skip running tests)
-mvn clean install -pl modules/integration/tests-common -DskipTests -am
+PRODUCT_APIM_TESTS="apim-integration-tests-api-common" \
+mvn clean install -DplatformTests -Pwithout-restart \
+  -pl modules/integration/tests-integration/tests-backend
 ```
-
-If the build fails looking for `carbon.zip` (the APIM distribution), you also need:
-
-```bash
-mvn clean install -pl modules/distribution/product -DskipTests -am
-```
-
-## Step 3 — Run Integration Tests
-
-### Configuration
-
-The `platform-test-host-config.xsl` has already been updated with:
-
-| Instance | Hostname | Port |
-|----------|----------|------|
-| store-old (DevPortal) | `cp.eus2.apim.example.com` | 443 |
-| publisher-old | `cp.eus2.apim.example.com` | 443 |
-| keyManager | `cp.eus2.apim.example.com` | 443 |
-| gateway-mgt | `cp.eus2.apim.example.com` | 443 |
-| gateway-wrk | `gw.eus2.apim.example.com` | 443 |
-| backend-server | `test-backends.apim.svc` | 8080 |
-
-If your hostnames differ, edit:
-`product-apim/all-in-one-apim/modules/integration/tests-integration/tests-backend/src/test/resources/platform-test-host-config.xsl`
 
 ### Run all tests (excluding restart/config tests)
 
 ```bash
 cd product-apim/all-in-one-apim
 
-mvn clean install -DplatformTests -Pwithout-restart \
-  -pl modules/integration/tests-integration/tests-backend
-```
-
-### Run a specific test group
-
-Use the `PRODUCT_APIM_TESTS` environment variable (comma-separated test names from testng.xml):
-
-```bash
-PRODUCT_APIM_TESTS="apim-integration-tests-api-common" \
 mvn clean install -DplatformTests -Pwithout-restart \
   -pl modules/integration/tests-integration/tests-backend
 ```
@@ -118,7 +171,7 @@ mvn clean install -DplatformTests -Pwithout-restart \
   -pl modules/integration/tests-integration/tests-backend
 ```
 
-## Recommended Test Groups
+## Test Groups
 
 ### Start with these (CRUD-heavy, no gateway invocation needed)
 
@@ -137,40 +190,67 @@ mvn clean install -DplatformTests -Pwithout-restart \
 | `apim-email-secondary-userstore-tests` | Visibility, CORS, scopes, tokens |
 | `apim-integration-tests-samples` | URI templates, default versions, PATCH |
 
-## Test Results
+## Current Test Results
 
-Results are in:
+With `apim-integration-tests-api-common`:
+
+```
+Tests run: 91, Failures: 9, Errors: 0, Skipped: 81
+```
+
+### Failure Breakdown
+
+| # | Failure | Root Cause | Fixable? |
+|---|---------|-----------|----------|
+| 1 | `APIManagerConfigurationChangeTestSuite` | Needs local `deployment.toml` — doesn't exist in platform mode | No (expected) |
+| 2 | `AdvancedWebAppDeploymentConfig` | `createApplication` returns null — likely app already exists from previous run | Investigate |
+| 3 | `APISecurityAuditTestCase.destroy` | Cleanup failure cascading from setup | No (cascading) |
+| 4 | `AddEditRemoveRESTResourceTestCase` | `ApiException` with null response body during revision creation | Investigate |
+| 5 | `JWTRevocationTestCase.setEnvironment` | `createApplication` returns null | Same as #2 |
+| 6 | `JWTRevocationTestCase.destroy` | Cleanup failure cascading from #5 | No (cascading) |
+| 7-8 | `APICreationTestCase.cleanUpArtifacts` | `apiId` is null because creation failed earlier | No (cascading) |
+| 9 | `AdvancedWebAppDeploymentConfig.cleanUpArtifacts` | Cascading from #2 | No (cascading) |
+
+**Unique root failures: 3** (#1 expected, #2 and #4 need investigation)
+**Cascading cleanup failures: 6**
+
+The 81 skipped tests are skipped because `APIManagerConfigurationChangeTestSuite` (which runs first in `testng-server-mgt.xml`) fails, causing the server management test suite to skip all dependent tests. The actual test classes from `testng.xml` do run.
+
+## Test Results Location
+
 ```
 product-apim/all-in-one-apim/modules/integration/tests-integration/tests-backend/target/surefire-reports/
 ```
 
 Quick summary:
 ```bash
-grep -c "PASSED\|FAILED\|SKIPPED" product-apim/all-in-one-apim/modules/integration/tests-integration/tests-backend/target/surefire-reports/testng-results.xml
+cat product-apim/all-in-one-apim/modules/integration/tests-integration/tests-backend/target/surefire-reports/TestSuite.txt
 ```
 
 ## Known Limitations
 
-1. **HTTP-only tests may fail** — The ingress only exposes HTTPS (443). Tests that use `getWebAppURLHttp()` construct URLs like `http://host:443/` which won't work. Most tests use HTTPS.
+1. **`APIManagerConfigurationChangeTestSuite` always fails in platform mode** — This test modifies `deployment.toml` on a local server. No local server exists in platform mode. This is expected and causes 81 tests in the server-mgt suite to be skipped.
 
-2. **Server management tests skipped** — Tests annotated `@SetEnvironment(STANDALONE)` (server startup checks, OSGi bundle checks) are automatically skipped in platform mode.
+2. **Gateway management API not accessible** — The gateway REST API (`/api/am/gateway/v2`) runs on the gateway pod's management port (9443), which isn't exposed through ingress. Tests that call `RestAPIGatewayImpl` methods (like `waitUntilApplicationAvailableInGateway`) are handled by `disableVerification=true`.
 
-3. **Restart tests not applicable** — Tests that restart the server or change `deployment.toml` can't work against a live K8s deployment. Use `-Pwithout-restart` to skip them.
+3. **Port-forward stability** — `kubectl port-forward` can die silently during long test runs. If tests suddenly fail with "Connection refused", restart the port-forwards. Consider using a wrapper that auto-reconnects.
 
-4. **Tenant tests may need setup** — Some tests create tenants. Ensure the APIM admin credentials (admin/admin) work against your deployment.
+4. **Rancher Desktop port conflict** — Rancher Desktop's `steve` process binds IPv4:9443. That's why we use 19443 instead. If you don't have Rancher, you could use 9443 directly (update automation.xml and XSL).
 
-5. **TLS trust** — If you get SSL errors, import your ingress certificate into the JVM truststore:
+5. **TLS cert mismatch** — The CP pod serves different TLS certs depending on cipher suite preference (EC cert for ECDHE-ECDSA, RSA cert for RSA ciphers). Java always gets the EC cert (`dynamiclistener-ca`). The override `wso2carbon.jks` has this cert pre-imported. If the cert rotates, re-extract and import it:
    ```bash
-   # Export the cert
-   openssl s_client -connect cp.eus2.apim.example.com:443 -servername cp.eus2.apim.example.com \
-     </dev/null 2>/dev/null | openssl x509 > /tmp/apim-cert.pem
+   # Extract EC cert from server
+   javac /tmp/SaveCert.java  # see INTEGRATION_TESTING_SUMMARY.md for source
+   java -cp /tmp SaveCert localhost 19443 /tmp/dynamiclistener-ec.pem
 
-   # Import into JVM truststore
-   sudo keytool -importcert -alias apim-aks -file /tmp/apim-cert.pem \
-     -keystore $JAVA_HOME/lib/security/cacerts -storepass changeit -noprompt
+   # Import into wso2carbon.jks
+   keytool -importcert -alias dynamiclistener-ec \
+     -file /tmp/dynamiclistener-ec.pem \
+     -keystore product-apim-overrides/.../wso2carbon.jks \
+     -storepass wso2carbon -noprompt
    ```
 
-   Or pass `-Djavax.net.ssl.trustStore=/path/to/your-truststore.jks` to Maven.
+6. **`createApplication` returning null** — Some tests fail because `RestAPIStoreImpl.createApplication()` catches `ApiException` and returns null instead of propagating the error. This is a product-apim framework bug, not specific to our setup.
 
 ## Cleanup
 
