@@ -3,7 +3,7 @@ replicaCount: 1
 image:
   repository: isurugunarathne/request-logger
   tag: latest
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
 
 service:
   type: ClusterIP

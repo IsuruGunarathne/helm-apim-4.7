@@ -78,6 +78,37 @@ curl -k -X DELETE https://localhost:8243/your-api/1.0.0/books/1 \
   -H "Internal-Key: <your-token>"
 ```
 
+## Anthropic API Proxy
+
+The service also proxies all requests under `/v1/*` to `https://api.anthropic.com`, logging both the request and response bodies. This lets you point any Anthropic SDK client at the cluster-internal URL to observe traffic without changing your code.
+
+Point the Anthropic SDK at the proxy by overriding `base_url`:
+
+```python
+import anthropic
+
+client = anthropic.Anthropic(
+    api_key="sk-ant-...",
+    base_url="http://request-logger.apim.svc:8000",
+)
+```
+
+Or with curl directly:
+
+```bash
+curl -X POST http://localhost:8000/v1/messages \
+  -H "x-api-key: $ANTHROPIC_API_KEY" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "content-type: application/json" \
+  -d '{"model":"claude-3-haiku-20240307","max_tokens":64,"messages":[{"role":"user","content":"hello"}]}'
+```
+
+Check pod logs to see the logged request and response:
+
+```bash
+kubectl logs -n apim deployment/request-logger -f
+```
+
 ## Teardown
 
 ```bash

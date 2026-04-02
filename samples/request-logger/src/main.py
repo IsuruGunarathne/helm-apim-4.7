@@ -1,7 +1,9 @@
 import json
 import logging
+from contextlib import asynccontextmanager
 from typing import Optional
 
+import httpx
 import yaml
 from fastapi import FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel
@@ -12,7 +14,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger("request_logger")
 
-app = FastAPI(title="Book Request Logger", version="1.0.0")
+http_client: httpx.AsyncClient = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global http_client
+    http_client = httpx.AsyncClient(timeout=120.0)
+    yield
+    await http_client.aclose()
+
+
+app = FastAPI(title="Book Request Logger", version="1.0.0", lifespan=lifespan)
 
 books_db: dict = {}
 next_id: int = 1
@@ -40,6 +53,28 @@ async def log_request(request: Request):
             parsed = json.loads(raw)
             formatted = json.dumps(parsed, indent=4, ensure_ascii=False)
         except json.JSONDecodeError:
+            formatted = raw.decode(errors="replace")
+        lines += ["  Body:", *[f"    {line}" for line in formatted.splitlines()]]
+    lines.append("─" * 60)
+    logger.info("\n" + "\n".join(lines))
+
+
+def log_response(response: httpx.Response):
+    headers = "\n".join(
+        f"    {k}: {v}" for k, v in response.headers.items()
+    )
+    lines = [
+        "─" * 60,
+        f"  Response: {response.status_code}",
+        "  Headers:",
+        headers,
+    ]
+    raw = response.content
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            formatted = json.dumps(parsed, indent=4, ensure_ascii=False)
+        except (json.JSONDecodeError, ValueError):
             formatted = raw.decode(errors="replace")
         lines += ["  Body:", *[f"    {line}" for line in formatted.splitlines()]]
     lines.append("─" * 60)
@@ -83,3 +118,49 @@ async def delete_book(book_id: int, request: Request):
     if book_id not in books_db:
         raise HTTPException(status_code=404, detail=f"Book {book_id} not found")
     books_db.pop(book_id)
+
+
+# ── Anthropic proxy ──────────────────────────────────────────────────────────
+
+ANTHROPIC_BASE_URL = "https://api.anthropic.com"
+
+HOP_BY_HOP_HEADERS = {"host", "content-length", "transfer-encoding", "connection",
+                       "keep-alive", "proxy-authenticate", "proxy-authorization",
+                       "te", "trailers", "upgrade"}
+
+# httpx auto-decompresses response bodies, so the content-encoding header no
+# longer reflects the actual bytes returned — strip it from responses only.
+RESPONSE_STRIP_HEADERS = HOP_BY_HOP_HEADERS | {"content-encoding"}
+
+
+@app.api_route("/v1/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+async def proxy_anthropic(path: str, request: Request):
+    await log_request(request)
+
+    upstream_url = f"{ANTHROPIC_BASE_URL}/v1/{path}"
+    forward_headers = {
+        k: v for k, v in request.headers.items()
+        if k.lower() not in HOP_BY_HOP_HEADERS
+    }
+    body = await request.body()
+
+    upstream_response = await http_client.request(
+        method=request.method,
+        url=upstream_url,
+        headers=forward_headers,
+        content=body,
+    )
+
+    log_response(upstream_response)
+
+    response_headers = {
+        k: v for k, v in upstream_response.headers.items()
+        if k.lower() not in RESPONSE_STRIP_HEADERS
+    }
+
+    return Response(
+        content=upstream_response.content,
+        status_code=upstream_response.status_code,
+        headers=response_headers,
+        media_type=upstream_response.headers.get("content-type"),
+    )
