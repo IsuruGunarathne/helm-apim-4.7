@@ -1,0 +1,18 @@
+replicaCount: 1
+
+image:
+  repository: isurugunarathne/graphql-books
+  tag: latest
+  pullPolicy: Always
+
+service:
+  type: ClusterIP
+  port: 8000
+
+resources:
+  requests:
+    memory: "128Mi"
+    cpu: "100m"
+  limits:
+    memory: "256Mi"
+    cpu: "250m"

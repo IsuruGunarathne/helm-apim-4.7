@@ -1,0 +1,5 @@
+apiVersion: v2
+name: graphql-books
+description: A simple GraphQL Books API for testing WSO2 API Manager's GraphQL features.
+version: 0.1.0
+appVersion: "1.0.0"

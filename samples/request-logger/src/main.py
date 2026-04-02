@@ -133,7 +133,7 @@ HOP_BY_HOP_HEADERS = {"host", "content-length", "transfer-encoding", "connection
 RESPONSE_STRIP_HEADERS = HOP_BY_HOP_HEADERS | {"content-encoding"}
 
 
-@app.api_route("/v1/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+@app.api_route("/v1/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"], include_in_schema=False)
 async def proxy_anthropic(path: str, request: Request):
     await log_request(request)
 
