@@ -60,6 +60,18 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 Open `http://localhost:8000/graphql` in your browser to use the GraphiQL IDE — you can explore
 the schema, run queries, and execute mutations interactively.
 
+### GraphiQL quick-reference
+
+Paste any of these directly into the GraphiQL editor and press the Run button.
+
+| Operation | GraphiQL input |
+|-----------|---------------|
+| List all books | `{ books { id title author year } }` |
+| Get book by ID | `{ book(id: 1) { id title author year } }` |
+| Create a book | `mutation { createBook(title: "The Great Gatsby", author: "F. Scott Fitzgerald", year: 1925) { id title author year } }` |
+| Update a book | `mutation { updateBook(id: 1, year: 2000) { id title author year } }` |
+| Delete a book | `mutation { deleteBook(id: 1) }` |
+
 ## Sample Operations
 
 All GraphQL requests are `POST` to `/graphql` with a JSON body containing a `query` field.
