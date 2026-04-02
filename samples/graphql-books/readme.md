@@ -35,6 +35,11 @@ type Mutation {
   updateBook(id: Int!, title: String, author: String, year: Int): Book
   deleteBook(id: Int!): Boolean!
 }
+
+type Subscription {
+  bookAdded: Book!    # fires on createBook
+  bookDeleted: Int!   # fires on deleteBook — yields the deleted book's ID
+}
 ```
 
 ## Service Details
@@ -49,12 +54,24 @@ type Mutation {
 
 ## Run Locally
 
+Two entry points are provided:
+
+| File | Subscriptions | Use when |
+|------|--------------|----------|
+| `main.py` | Yes (WebSocket) | Local dev / testing subscriptions |
+| `main-no-subs.py` | No | Registering with WSO2 APIM (simpler SDL, no WebSocket needed) |
+
 ```bash
 cd samples/graphql-books/src
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+
+# With subscriptions
 uvicorn main:app --host 0.0.0.0 --port 8000
+
+# Without subscriptions (for APIM integration)
+uvicorn main-no-subs:app --host 0.0.0.0 --port 8000
 ```
 
 Open `http://localhost:8000/graphql` in your browser to use the GraphiQL IDE — you can explore
@@ -71,6 +88,20 @@ Paste any of these directly into the GraphiQL editor and press the Run button.
 | Create a book | `mutation { createBook(title: "The Great Gatsby", author: "F. Scott Fitzgerald", year: 1925) { id title author year } }` |
 | Update a book | `mutation { updateBook(id: 1, year: 2000) { id title author year } }` |
 | Delete a book | `mutation { deleteBook(id: 1) }` |
+| Subscribe to new books | `subscription { bookAdded { id title author year } }` |
+| Subscribe to deletions | `subscription { bookDeleted }` |
+
+### Testing subscriptions with GraphiQL
+
+Subscriptions use a persistent WebSocket connection — the tab stays open and events arrive in real time.
+
+1. Open **two tabs** at `http://localhost:8000/graphql`
+2. **Tab 1** — paste and run: `subscription { bookAdded { id title author year } }`
+   The spinner indicates it's waiting for events.
+3. **Tab 2** — run a `createBook` mutation
+4. **Tab 1** immediately receives the new book pushed from the server
+
+To test `bookDeleted`, subscribe in one tab and run `mutation { deleteBook(id: 1) }` in the other.
 
 ## Sample Operations
 

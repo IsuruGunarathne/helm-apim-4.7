@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-import asyncio
 import logging
-from typing import AsyncGenerator, Optional
+from typing import Optional
 
 import strawberry
 from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
 from strawberry.fastapi import GraphQLRouter
-from strawberry.subscriptions import GRAPHQL_TRANSPORT_WS_PROTOCOL, GRAPHQL_WS_PROTOCOL
 
 logging.basicConfig(
     level=logging.INFO,
@@ -18,11 +16,6 @@ logger = logging.getLogger("graphql_books")
 
 books_db: dict = {}
 next_id: int = 1
-
-# Per-subscriber queues — one asyncio.Queue per active WebSocket connection.
-# In-memory is fine for single-pod / single-region deployments.
-_book_added_subs: list[asyncio.Queue] = []
-_book_deleted_subs: list[asyncio.Queue] = []
 
 
 # ── GraphQL types ─────────────────────────────────────────────────────────────
@@ -60,12 +53,9 @@ class Mutation:
         global next_id
         data = {"id": next_id, "title": title, "author": author, "year": year}
         books_db[next_id] = data
-        book = Book(**data)
         logger.info("Mutation: createBook → id=%d, title=%s", next_id, title)
         next_id += 1
-        for q in _book_added_subs:
-            q.put_nowait(book)
-        return book
+        return Book(**data)
 
     @strawberry.mutation
     def update_book(
@@ -96,45 +86,13 @@ class Mutation:
             return False
         del books_db[id]
         logger.info("Mutation: deleteBook(id=%d) → deleted", id)
-        for q in _book_deleted_subs:
-            q.put_nowait(id)
         return True
-
-
-# ── Subscriptions ─────────────────────────────────────────────────────────────
-
-@strawberry.type
-class Subscription:
-    @strawberry.subscription
-    async def book_added(self) -> AsyncGenerator[Book, None]:
-        """Fires whenever a book is created."""
-        q: asyncio.Queue[Book] = asyncio.Queue()
-        _book_added_subs.append(q)
-        try:
-            while True:
-                yield await q.get()
-        finally:
-            _book_added_subs.remove(q)
-
-    @strawberry.subscription
-    async def book_deleted(self) -> AsyncGenerator[int, None]:
-        """Fires whenever a book is deleted — yields the deleted book's ID."""
-        q: asyncio.Queue[int] = asyncio.Queue()
-        _book_deleted_subs.append(q)
-        try:
-            while True:
-                yield await q.get()
-        finally:
-            _book_deleted_subs.remove(q)
 
 
 # ── App setup ─────────────────────────────────────────────────────────────────
 
-schema = strawberry.Schema(query=Query, mutation=Mutation, subscription=Subscription)
-graphql_router = GraphQLRouter(
-    schema,
-    subscription_protocols=[GRAPHQL_TRANSPORT_WS_PROTOCOL, GRAPHQL_WS_PROTOCOL],
-)
+schema = strawberry.Schema(query=Query, mutation=Mutation)
+graphql_router = GraphQLRouter(schema)
 
 app = FastAPI(title="GraphQL Books API", version="1.0.0")
 app.include_router(graphql_router, prefix="/graphql")
