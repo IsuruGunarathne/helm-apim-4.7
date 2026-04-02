@@ -2,6 +2,17 @@
 
 A simple Book CRUD API that logs all incoming requests. Used as a backend for testing APIs through the WSO2 API Gateway.
 
+## Run Locally
+
+```bash
+cd samples/request-logger/src
+python3 -m venv .venv
+source .venv/bin/activate
+pip3 install -r requirements.txt
+uvicorn main:app --host 0.0.0.0 --port 8000
+```
+The API will be available at `http://localhost:8000`.
+
 ## Deploy
 
 ```bash
