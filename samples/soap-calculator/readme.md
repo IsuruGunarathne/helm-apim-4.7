@@ -19,7 +19,7 @@ This calculator exposes 4 operations: `Add`, `Subtract`, `Multiply`, `Divide`.
 |----------|-------|
 | Port | 8000 |
 | WSDL URL | `http://soap-calculator.apim.svc:8000/?wsdl` |
-| SOAP Endpoint | `http://soap-calculator.apim.svc:8000/` |
+| SOAP Endpoint | `http://soap-calculator.apim.svc:8000/` (trailing slash required) |
 | Operations | Add, Subtract, Multiply, Divide |
 
 Example SOAP request (Add 5 + 3):
@@ -45,6 +45,38 @@ Response:
     </calc:AddResponse>
   </soapenv:Body>
 </soapenv:Envelope>
+```
+
+## Run Locally
+
+```bash
+cd samples/soap-calculator/src
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python main.py
+```
+
+The server starts on `http://localhost:8000`. Verify it's running:
+
+```bash
+# Fetch the WSDL
+curl http://localhost:8000/?wsdl
+
+# Call the Add operation
+curl -X POST http://localhost:8000/ \
+  -H "Content-Type: text/xml" \
+  -H "SOAPAction: \"Add\"" \
+  -d '<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+                  xmlns:calc="http://calculator.example.com">
+  <soapenv:Body>
+    <calc:Add>
+      <calc:a>5</calc:a>
+      <calc:b>3</calc:b>
+    </calc:Add>
+  </soapenv:Body>
+</soapenv:Envelope>'
 ```
 
 ## Deploy
@@ -78,7 +110,7 @@ kubectl get pods -n apim -l app.kubernetes.io/name=soap-calculator
    - Name: `Calculator`
    - Context: `/calculator`
    - Version: `1.0.0`
-6. Set the endpoint: `http://soap-calculator.apim.svc:8000`
+6. Set the endpoint: `http://soap-calculator.apim.svc:8000/` (trailing slash required — without it Synapse sends an empty path)
 7. Go to **Deployments** > **Deploy**
 8. Go to **Lifecycle** > **Publish**
 
