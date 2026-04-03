@@ -38,6 +38,63 @@ export DC2_PASS="{your-password}"
 
 ---
 
+## Connecting from a Jump VM
+
+If you have a VM in the same VNet (or a peered VNet), you can use it as a jump box to connect to the SQL Server VMs and run the setup scripts.
+
+### Test connectivity
+
+```bash
+telnet <sql-server-private-ip> 1433
+# Expected output:
+# Trying <ip>...
+# Connected to <ip>.
+# Escape character is '^]'.
+```
+
+If this succeeds, port 1433 is reachable.
+
+### Install sqlcmd (Ubuntu/Debian)
+
+```bash
+# Download and install Microsoft signing key
+curl -sSL https://packages.microsoft.com/keys/microsoft.asc | sudo gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg
+
+# Add the Microsoft SQL Server repository
+wget -qO- https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/prod.list | sudo tee /etc/apt/sources.list.d/microsoft-prod.list
+
+# Install sqlcmd and ODBC driver
+sudo apt-get update
+sudo apt-get install -y mssql-tools18 unixodbc-dev
+
+# Add sqlcmd to PATH
+echo 'export PATH="$PATH:/opt/mssql-tools18/bin"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+### Connect to SQL Server
+
+```bash
+sqlcmd -S <sql-server-private-ip>,1433 -U $DC1_USER -P $DC1_PASS -C
+```
+
+The `-C` flag trusts the server certificate (needed for self-signed certs on VMs).
+
+### Run scripts from the jump VM
+
+Copy the `dbscripts/` directory to the jump VM (e.g., via `scp` or `git clone`), then run scripts as shown in Step 4:
+
+```bash
+# Example: DC1 tables
+sqlcmd -S <dc1-private-ip>,1433 -U $DC1_USER -P $DC1_PASS -d shared_db -C \
+  -i dbscripts/dc1/SQLServer/mssql/tables.sql
+
+sqlcmd -S <dc1-private-ip>,1433 -U $DC1_USER -P $DC1_PASS -d apim_db -C \
+  -i dbscripts/dc1/SQLServer/mssql/apimgt/tables.sql
+```
+
+---
+
 ## Step 1: Prerequisites
 
 Ensure the following on **both** SQL Server VMs:
@@ -538,6 +595,96 @@ GO
 DELETE FROM AM_ALERT_TYPES WHERE ALERT_TYPE_ID IN (998, 999);
 GO
 ```
+
+---
+
+## Connecting APIM (Kubernetes) to SQL Server
+
+WSO2 API Manager running in AKS needs to reach the SQL Server VMs over JDBC.
+
+### Networking
+
+AKS pods can reach the SQL Server VM's private IP directly if:
+- AKS uses **Azure CNI** networking (pods get IPs from the VNet subnet)
+- The AKS VNet and SQL Server VNet are the **same VNet** or **peered**
+- The **NSG on the SQL Server VM** allows inbound port 1433 from the AKS subnet CIDR
+- **Windows Firewall** on the SQL VM allows inbound 1433
+
+Quick connectivity test from a pod:
+```bash
+kubectl run debug --rm -it --image=mcr.microsoft.com/mssql-tools -n apim -- /bin/bash
+
+# Inside the pod:
+/opt/mssql-tools/bin/sqlcmd -S <sql-vm-private-ip>,1433 -U apimadmineast -P '{password}' -C -Q "SELECT 1"
+```
+
+### Helm Values Configuration
+
+Configure the JDBC connection in your Helm values files (e.g., `azure-values-dc1.yaml`). This follows the same pattern as the existing PostgreSQL configuration.
+
+**DC1 example:**
+```yaml
+wso2:
+  apim:
+    configurations:
+      databases:
+        type: "mssql"
+        jdbc:
+          driver: "com.microsoft.sqlserver.jdbc.SQLServerDriver"
+        apim_db:
+          url: "jdbc:sqlserver://<dc1-sql-private-ip>:1433;databaseName=apim_db;encrypt=true;trustServerCertificate=true"
+          username: "apimadmineast"
+          password: "{your-password}"
+        shared_db:
+          url: "jdbc:sqlserver://<dc1-sql-private-ip>:1433;databaseName=shared_db;encrypt=true;trustServerCertificate=true"
+          username: "apimadmineast"
+          password: "{your-password}"
+```
+
+**DC2** — same structure, pointing to DC2's SQL Server private IP with `apimadminwest`.
+
+> **Note:** In `deployment.toml`, JDBC URLs must use `&amp;` instead of bare `&` for any URL parameters (XML entity encoding).
+
+### JDBC Driver Init Container
+
+The APIM container image does not bundle the SQL Server JDBC driver. Use an init container to download it at pod startup, following the same pattern used for PostgreSQL.
+
+**Control Plane (`azure-values-dc1.yaml`):**
+```yaml
+kubernetes:
+  initContainers:
+    - name: mssql-driver-init
+      image: busybox:1.36
+      command:
+        - /bin/sh
+        - -c
+        - |
+          wget -O /jdbc-driver/mssql-jdbc-12.8.1.jre11.jar \
+            "https://repo1.maven.org/maven2/com/microsoft/sqlserver/mssql-jdbc/12.8.1.jre11/mssql-jdbc-12.8.1.jre11.jar" && \
+          echo "MSSQL JDBC driver downloaded successfully"
+      volumeMounts:
+        - name: mssql-driver-vol
+          mountPath: /jdbc-driver
+  extraVolumes:
+    - name: mssql-driver-vol
+      emptyDir: {}
+  extraVolumeMounts:
+    - name: mssql-driver-vol
+      mountPath: /home/wso2carbon/wso2am-acp-4.7.0-alpha/repository/components/lib/mssql-jdbc-12.8.1.jre11.jar
+      subPath: mssql-jdbc-12.8.1.jre11.jar
+      readOnly: true
+```
+
+**Gateway** — same init container, but change the mount path to match the gateway profile:
+```yaml
+  extraVolumeMounts:
+    - name: mssql-driver-vol
+      mountPath: /home/wso2carbon/wso2am-universal-gw-4.7.0-alpha/repository/components/lib/mssql-jdbc-12.8.1.jre11.jar
+      subPath: mssql-jdbc-12.8.1.jre11.jar
+      readOnly: true
+```
+
+> **Tip:** Check the actual APIM version path inside the container (`ls /home/wso2carbon/`) in case the version suffix differs from `4.7.0-alpha`.
 
 ---
 

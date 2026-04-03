@@ -232,6 +232,65 @@ mvn clean install \
 
 ---
 
+## Keeping Tests Running After Disconnecting
+
+Tests run for 15-30+ minutes. If you disconnect (network drop, closing the terminal), the SSH
+session ends and takes all its child processes with it — including Maven. Use `tmux` to prevent this.
+
+### Using tmux (recommended)
+
+`tmux` creates a persistent session on the VM that keeps running whether or not you're connected.
+
+```bash
+# Install (one-time)
+sudo apt install -y tmux
+
+# Start a named session before running tests
+tmux new -s integration-tests
+```
+
+You're now inside the tmux session. Run the tests as normal. When you want to disconnect:
+
+- **Detach** (leave tests running): press `Ctrl+B`, then `D`
+
+You're back to your shell and the tests continue on the VM. To reconnect later:
+
+```bash
+# SSH back into the VM, then:
+tmux attach -t integration-tests
+```
+
+You'll see the live output as if you never left.
+
+```bash
+# List all sessions (if you forget the name)
+tmux ls
+```
+
+### Alternative: nohup
+
+If you'd rather not use tmux, `nohup` makes the process immune to the hangup signal:
+
+```bash
+cd product-apim/all-in-one-apim
+
+nohup mvn clean install \
+  -pl modules/integration/tests-integration/tests-backend \
+  > ~/test-results-all.log 2>&1 &
+
+echo "PID: $!"   # note this so you can kill it if needed
+```
+
+After reconnecting, follow the log:
+
+```bash
+tail -f ~/test-results-all.log
+```
+
+The downside: you can't interact with the process at all once it's backgrounded.
+
+---
+
 ## Re-running Tests (Clean State)
 
 PostgreSQL databases accumulate state between test runs. For a clean run, recreate them:
