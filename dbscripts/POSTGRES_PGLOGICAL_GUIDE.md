@@ -29,11 +29,27 @@ export DC1_USER=apimadmineast
 export DC1_PORT=5432
 export DC1_PASS="{your-password}"
 
+or
+
+export PGHOST=apim-4-7-eus2.postgres.database.azure.com
+export PGUSER=apimadmineast
+export PGPORT=5432
+export PGDATABASE=postgres
+export PGPASSWORD="{your-password}" # for psql convenience
+
 # DC2 — West US 2
 export DC2_HOST=apim-4-7-wus2.postgres.database.azure.com
 export DC2_USER=apimadminwest
 export DC2_PORT=5432
 export DC2_PASS="{your-password}"
+
+or 
+
+export PGHOST=apim-4-7-wus2.postgres.database.azure.com
+export PGUSER=apimadminwest
+export PGPORT=5432
+export PGDATABASE=postgres
+export PGPASSWORD="{your-password}" # for psql convenience
 ```
 
 ---

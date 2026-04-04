@@ -218,7 +218,7 @@ cd product-apim/all-in-one-apim
 
 mvn clean install \
   -pl modules/integration/tests-integration/tests-backend \
-  2>&1 | tee ~/test-results-all.log
+  2>&1 | tee ~/test-results-all-postgres.log
 ```
 
 ### Other test groups
@@ -276,7 +276,7 @@ cd product-apim/all-in-one-apim
 
 nohup mvn clean install \
   -pl modules/integration/tests-integration/tests-backend \
-  > ~/test-results-all.log 2>&1 &
+  > ~/test-results-all-postgres.log 2>&1 &
 
 echo "PID: $!"   # note this so you can kill it if needed
 ```
