@@ -27,227 +27,84 @@ export DC2_PASS="distributed@2"
 
 ## Phase 1: Teardown
 
+> **Important:** Subscriptions were created using IP addresses (not hostnames) in Step 7 of the replication guide. The drop commands below use `${DC2_HOST}` and `${DC1_HOST}` to match. Make sure the environment variables above are set before running.
+
 ### 1.1 Drop subscriptions on DC1
 
-**DC1 — apim_db:**
-
 ```bash
-sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d apim_db -C
-```
+# DC1 — drop apim_db subscription to DC2
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d apim_db -C \
+  -Q "EXEC sp_dropsubscription @publication = 'apim_db_pub', @subscriber = '${DC2_HOST}', @destination_db = 'apim_db', @article = 'all'; GO"
 
-```sql
--- Check existing subscriptions
-EXEC sp_helpsubscription @publication = 'apim_db_pub';
-GO
-
--- Drop subscription to DC2
-EXEC sp_dropsubscription
-    @publication = 'apim_db_pub',
-    @subscriber = 'apim-4-7-wus2-s',
-    @destination_db = 'apim_db',
-    @article = 'all';
-GO
-```
-
-**DC1 — shared_db:**
-
-```bash
-sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d shared_db -C
-```
-
-```sql
-EXEC sp_dropsubscription
-    @publication = 'shared_db_pub',
-    @subscriber = 'apim-4-7-wus2-s',
-    @destination_db = 'shared_db',
-    @article = 'all';
-GO
+# DC1 — drop shared_db subscription to DC2
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d shared_db -C \
+  -Q "EXEC sp_dropsubscription @publication = 'shared_db_pub', @subscriber = '${DC2_HOST}', @destination_db = 'shared_db', @article = 'all'; GO"
 ```
 
 ### 1.2 Drop subscriptions on DC2
 
-**DC2 — apim_db:**
-
 ```bash
-sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d apim_db -C
-```
+# DC2 — drop apim_db subscription to DC1
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d apim_db -C \
+  -Q "EXEC sp_dropsubscription @publication = 'apim_db_pub', @subscriber = '${DC1_HOST}', @destination_db = 'apim_db', @article = 'all'; GO"
 
-```sql
-EXEC sp_dropsubscription
-    @publication = 'apim_db_pub',
-    @subscriber = 'apim-4-7-eus2-s',
-    @destination_db = 'apim_db',
-    @article = 'all';
-GO
-```
-
-**DC2 — shared_db:**
-
-```bash
-sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d shared_db -C
-```
-
-```sql
-EXEC sp_dropsubscription
-    @publication = 'shared_db_pub',
-    @subscriber = 'apim-4-7-eus2-s',
-    @destination_db = 'shared_db',
-    @article = 'all';
-GO
+# DC2 — drop shared_db subscription to DC1
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d shared_db -C \
+  -Q "EXEC sp_dropsubscription @publication = 'shared_db_pub', @subscriber = '${DC1_HOST}', @destination_db = 'shared_db', @article = 'all'; GO"
 ```
 
 ### 1.3 Drop publications on both DCs
 
-**DC1 — apim_db:**
-
 ```bash
-sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d apim_db -C
-```
+# DC1
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d apim_db -C \
+  -Q "EXEC sp_droppublication @publication = 'apim_db_pub'; GO"
 
-```sql
-EXEC sp_droppublication @publication = 'apim_db_pub';
-GO
-```
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d shared_db -C \
+  -Q "EXEC sp_droppublication @publication = 'shared_db_pub'; GO"
 
-**DC1 — shared_db:**
+# DC2
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d apim_db -C \
+  -Q "EXEC sp_droppublication @publication = 'apim_db_pub'; GO"
 
-```bash
-sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d shared_db -C
-```
-
-```sql
-EXEC sp_droppublication @publication = 'shared_db_pub';
-GO
-```
-
-**DC2 — apim_db:**
-
-```bash
-sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d apim_db -C
-```
-
-```sql
-EXEC sp_droppublication @publication = 'apim_db_pub';
-GO
-```
-
-**DC2 — shared_db:**
-
-```bash
-sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d shared_db -C
-```
-
-```sql
-EXEC sp_droppublication @publication = 'shared_db_pub';
-GO
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d shared_db -C \
+  -Q "EXEC sp_droppublication @publication = 'shared_db_pub'; GO"
 ```
 
 ### 1.4 Disable publishing on databases
 
-**DC1:**
-
 ```bash
-sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -C
-```
+# DC1
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -C \
+  -Q "EXEC sp_replicationdboption @dbname = 'apim_db', @optname = 'publish', @value = 'false'; GO EXEC sp_replicationdboption @dbname = 'shared_db', @optname = 'publish', @value = 'false'; GO"
 
-```sql
-EXEC sp_replicationdboption @dbname = 'apim_db', @optname = 'publish', @value = 'false';
-GO
-EXEC sp_replicationdboption @dbname = 'shared_db', @optname = 'publish', @value = 'false';
-GO
-```
-
-**DC2:**
-
-```bash
-sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -C
-```
-
-```sql
-EXEC sp_replicationdboption @dbname = 'apim_db', @optname = 'publish', @value = 'false';
-GO
-EXEC sp_replicationdboption @dbname = 'shared_db', @optname = 'publish', @value = 'false';
-GO
+# DC2
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -C \
+  -Q "EXEC sp_replicationdboption @dbname = 'apim_db', @optname = 'publish', @value = 'false'; GO EXEC sp_replicationdboption @dbname = 'shared_db', @optname = 'publish', @value = 'false'; GO"
 ```
 
 ### 1.5 Drop databases on both DCs
 
-**DC1:**
-
 ```bash
-sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -C
-```
+# DC1
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d master -C \
+  -Q "ALTER DATABASE apim_db SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE apim_db; ALTER DATABASE shared_db SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE shared_db;"
 
-```sql
-USE master;
-GO
-
-ALTER DATABASE apim_db SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
-GO
-DROP DATABASE apim_db;
-GO
-
-ALTER DATABASE shared_db SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
-GO
-DROP DATABASE shared_db;
-GO
-```
-
-**DC2:**
-
-```bash
-sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -C
-```
-
-```sql
-USE master;
-GO
-
-ALTER DATABASE apim_db SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
-GO
-DROP DATABASE apim_db;
-GO
-
-ALTER DATABASE shared_db SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
-GO
-DROP DATABASE shared_db;
-GO
+# DC2
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d master -C \
+  -Q "ALTER DATABASE apim_db SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE apim_db; ALTER DATABASE shared_db SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE shared_db;"
 ```
 
 ### 1.6 Clean up distribution database (if needed)
 
-**DC1:**
-
 ```bash
-sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -C
-```
+# DC1
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d distribution -C \
+  -Q "SELECT * FROM dbo.MSsubscriptions; GO EXEC sp_MSdistribution_cleanup @min_distretention = 0, @max_distretention = 0; GO"
 
-```sql
--- Check for stale subscriptions in the distribution database
-USE distribution;
-GO
-SELECT * FROM dbo.MSsubscriptions;
-GO
-
--- Clean up distribution history
-EXEC sp_MSdistribution_cleanup @min_distretention = 0, @max_distretention = 0;
-GO
-```
-
-**DC2:**
-
-```bash
-sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -C
-```
-
-```sql
-USE distribution;
-GO
-SELECT * FROM dbo.MSsubscriptions;
-GO
-
-EXEC sp_MSdistribution_cleanup @min_distretention = 0, @max_distretention = 0;
-GO
+# DC2
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d distribution -C \
+  -Q "SELECT * FROM dbo.MSsubscriptions; GO EXEC sp_MSdistribution_cleanup @min_distretention = 0, @max_distretention = 0; GO"
 ```
 
 ---
@@ -258,13 +115,15 @@ Follow [SQLSERVER_REPLICATION_GUIDE.md](SQLSERVER_REPLICATION_GUIDE.md) from **S
 
 - **Step 3** — Create `apim_db` and `shared_db` on both DCs
 - **Step 4** — Run DC-specific table scripts (`dc1/SQLServer/mssql/` and `dc2/SQLServer/mssql/`)
+- **Step 4a** — Create replication database users (`repl_dc2` on DC1, `repl_dc1` on DC2)
 - **Step 5** — Configure publishing on all 4 databases
 - **Step 6** — Add articles (tables) to publications
-- **Step 7** — Create bidirectional subscriptions
-- **Step 8** — Start replication agents
+- **Step 7** — Create bidirectional subscriptions (agents auto-start)
+- **Step 8** — Verify agents are running
 - **Step 9** — Verify all subscriptions are active
+- **Step 10** — Test bidirectional replication
 
-> Steps 1-2 (prerequisites and distribution configuration) don't need to be repeated — they're server-level settings that survive database drops.
+> Steps 1-2 (prerequisites, logins, and distribution configuration) don't need to be repeated — they're server-level settings that survive database drops. However, Step 4a (database users) **must** be re-run since the databases are new.
 
 ---
 
@@ -290,47 +149,43 @@ You should see the `admin` user (created by DC1's first startup) appear on DC2.
 ### "database is in use" when dropping
 
 Use `SET SINGLE_USER WITH ROLLBACK IMMEDIATE` as shown in Step 1.5. If that still fails:
-```sql
--- Kill all connections to the database
-DECLARE @kill VARCHAR(8000) = '';
-SELECT @kill = @kill + 'KILL ' + CONVERT(VARCHAR(5), session_id) + ';'
-FROM sys.dm_exec_sessions
-WHERE database_id = DB_ID('apim_db') AND session_id <> @@SPID;
-EXEC(@kill);
-GO
+
+```bash
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d master -C \
+  -Q "DECLARE @kill VARCHAR(8000) = ''; SELECT @kill = @kill + 'KILL ' + CONVERT(VARCHAR(5), session_id) + ';' FROM sys.dm_exec_sessions WHERE database_id = DB_ID('apim_db') AND session_id <> @@SPID; EXEC(@kill);"
 ```
 
 ### Subscription errors after recreation
 
-```sql
--- Check for error details
-SELECT * FROM distribution.dbo.MSrepl_errors ORDER BY time DESC;
-GO
+```bash
+# Check error details on DC1
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d distribution -C \
+  -i dbscripts/mssqlcommands/step9_check_errors.sql
 
--- If agents are stuck, stop and restart them from SQL Server Agent Jobs
+# Check error details on DC2
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d distribution -C \
+  -i dbscripts/mssqlcommands/step9_check_errors.sql
 ```
 
 ### Orphaned replication agent jobs
 
 After dropping publications, check if SQL Server Agent jobs were cleaned up:
-```sql
--- List replication-related jobs
-SELECT name, enabled FROM msdb.dbo.sysjobs
-WHERE category_id IN (
-    SELECT category_id FROM msdb.dbo.syscategories WHERE name LIKE 'REPL%'
-);
-GO
 
--- Delete orphaned jobs manually if needed
-EXEC msdb.dbo.sp_delete_job @job_name = 'job_name_here';
-GO
+```bash
+# List replication jobs on DC1
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d msdb -C \
+  -i dbscripts/mssqlcommands/step9_agent_jobs.sql
+
+# Delete orphaned jobs manually if needed
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d msdb -C \
+  -Q "EXEC msdb.dbo.sp_delete_job @job_name = '<job_name_here>';"
 ```
 
 ### Distribution database issues
 
 If the distribution database has stale entries after recreation:
-```sql
--- Reinitialize distribution cleanup
-EXEC distribution.dbo.sp_MSdistribution_cleanup @min_distretention = 0, @max_distretention = 0;
-GO
+
+```bash
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d distribution -C \
+  -Q "EXEC sp_MSdistribution_cleanup @min_distretention = 0, @max_distretention = 0; GO"
 ```

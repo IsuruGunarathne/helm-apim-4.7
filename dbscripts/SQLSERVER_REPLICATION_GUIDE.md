@@ -114,22 +114,9 @@ sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d master -C \
 <details><summary>step1_dc1_login.sql</summary>
 
 ```sql
--- Login for DC2 to connect for replication
+-- Create replication login on DC1
+-- DC2's Distribution Agent will use this login to push replicated data here
 CREATE LOGIN repl_dc2 WITH PASSWORD = 'Repl@2025';
-GO
-
--- Create database users for the replication login on apim_db and shared_db
--- (Run AFTER Step 4 creates the databases and tables, but listed here for reference)
--- These are needed so the Distribution Agent can write replicated data
-USE apim_db;
-GO
-CREATE USER repl_dc2 FOR LOGIN repl_dc2;
-EXEC sp_addrolemember 'db_owner', 'repl_dc2';
-GO
-USE shared_db;
-GO
-CREATE USER repl_dc2 FOR LOGIN repl_dc2;
-EXEC sp_addrolemember 'db_owner', 'repl_dc2';
 GO
 ```
 </details>
@@ -143,27 +130,12 @@ sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d master -C \
 <details><summary>step1_dc2_login.sql</summary>
 
 ```sql
--- Login for DC1 to connect for replication
+-- Create replication login on DC2
+-- DC1's Distribution Agent will use this login to push replicated data here
 CREATE LOGIN repl_dc1 WITH PASSWORD = 'Repl@2025';
-GO
-
--- Create database users for the replication login on apim_db and shared_db
--- (Run AFTER Step 4 creates the databases and tables, but listed here for reference)
--- These are needed so the Distribution Agent can write replicated data
-USE apim_db;
-GO
-CREATE USER repl_dc1 FOR LOGIN repl_dc1;
-EXEC sp_addrolemember 'db_owner', 'repl_dc1';
-GO
-USE shared_db;
-GO
-CREATE USER repl_dc1 FOR LOGIN repl_dc1;
-EXEC sp_addrolemember 'db_owner', 'repl_dc1';
 GO
 ```
 </details>
-
-> **Important:** The `CREATE LOGIN` runs first (Step 1), but the `CREATE USER` / `sp_addrolemember` commands will fail until the databases exist. Run Step 1 login creation first, then after Step 4 (databases + tables created), re-run the same file to create the database users. The `CREATE LOGIN` will error as "already exists" — that's fine, the `CREATE USER` commands will succeed.
 
 ---
 
@@ -174,7 +146,7 @@ Each server acts as its own distributor.
 ### DC1
 
 ```bash
-sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -C \
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d master -C \
   -i dbscripts/mssqlcommands/step2_dc1_distribution.sql
 ```
 
@@ -208,7 +180,7 @@ GO
 ### DC2
 
 ```bash
-sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -C \
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d master -C \
   -i dbscripts/mssqlcommands/step2_dc2_distribution.sql
 ```
 
@@ -316,6 +288,68 @@ sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d apim_db -C \
 This ensures DC1 generates IDs 1,3,5,7... and DC2 generates 2,4,6,8... — no collisions during replication.
 
 > **Note:** The `NOT FOR REPLICATION` flag is already set by the `sp_msforeachtable` block at the end of each script. This tells SQL Server to preserve the original IDENTITY values when rows arrive via replication, rather than generating new ones.
+
+---
+
+## Step 4a: Create Replication Database Users
+
+Now that the databases exist, create database users for the replication logins. These are needed so the Distribution Agent can write replicated data into the target databases.
+
+**DC1** — create user for `repl_dc2` (DC2's agent writes here):
+```bash
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -C \
+  -i dbscripts/mssqlcommands/step4a_dc1_dbusers.sql
+```
+
+**DC2** — create user for `repl_dc1` (DC1's agent writes here):
+```bash
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -C \
+  -i dbscripts/mssqlcommands/step4a_dc2_dbusers.sql
+```
+
+<details><summary>step4a_dc1_dbusers.sql</summary>
+
+```sql
+-- Create database users for replication login (repl_dc2) on DC1
+-- DC2's Distribution Agent uses repl_dc2 to push replicated data to DC1
+-- Run this AFTER databases and tables are created (Step 3-4)
+
+USE apim_db;
+GO
+CREATE USER repl_dc2 FOR LOGIN repl_dc2;
+EXEC sp_addrolemember 'db_owner', 'repl_dc2';
+GO
+
+USE shared_db;
+GO
+CREATE USER repl_dc2 FOR LOGIN repl_dc2;
+EXEC sp_addrolemember 'db_owner', 'repl_dc2';
+GO
+```
+</details>
+
+<details><summary>step4a_dc2_dbusers.sql</summary>
+
+```sql
+-- Create database users for replication login (repl_dc1) on DC2
+-- DC1's Distribution Agent uses repl_dc1 to push replicated data to DC2
+-- Run this AFTER databases and tables are created (Step 3-4)
+
+USE apim_db;
+GO
+CREATE USER repl_dc1 FOR LOGIN repl_dc1;
+EXEC sp_addrolemember 'db_owner', 'repl_dc1';
+GO
+
+USE shared_db;
+GO
+CREATE USER repl_dc1 FOR LOGIN repl_dc1;
+EXEC sp_addrolemember 'db_owner', 'repl_dc1';
+GO
+```
+</details>
+
+> **Why `db_owner`?** The Distribution Agent needs to INSERT, UPDATE, and DELETE replicated rows and manage schema artifacts. `db_owner` is the simplest role that covers all replication operations.
 
 ---
 
@@ -716,10 +750,10 @@ GO
 ### Check replication monitor
 
 ```bash
-sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d master -C \
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d distribution -C \
   -i dbscripts/mssqlcommands/step9_dc1_monitor.sql
 
-sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d master -C \
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d distribution -C \
   -i dbscripts/mssqlcommands/step9_dc2_monitor.sql
 ```
 
@@ -963,7 +997,7 @@ GO
 
 ```bash
 # Check Distribution Agent status on DC1
-sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d master -C \
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d distribution -C \
   -i dbscripts/mssqlcommands/step9_dc1_monitor.sql
 
 # Restart a stopped agent job
@@ -1037,12 +1071,14 @@ GO
 
 | Step | DC1 (East US 2) | DC2 (West US 2) |
 |------|-----------------|-----------------|
-| Prerequisites | SQL Server Agent running | SQL Server Agent running |
-| Configure distribution | Self as distributor | Self as distributor |
-| Create databases | `apim_db`, `shared_db` | `apim_db`, `shared_db` |
-| Run table scripts | `dc1/SQLServer/mssql/` scripts | `dc2/SQLServer/mssql/` scripts |
-| Enable publishing | Both databases | Both databases |
-| Add articles | All tables in both databases | All tables in both databases |
-| Create subscriptions | Push to DC2 | Push to DC1 |
-| Start agents | Log Reader + Distribution | Log Reader + Distribution |
-| Verify | Check status on both | Check status on both |
+| 1. Prerequisites | SQL Server Agent running, create `repl_dc2` login | SQL Server Agent running, create `repl_dc1` login |
+| 2. Configure distribution | Self as distributor | Self as distributor |
+| 3. Create databases | `apim_db`, `shared_db` | `apim_db`, `shared_db` |
+| 4. Run table scripts | `dc1/SQLServer/mssql/` scripts | `dc2/SQLServer/mssql/` scripts |
+| 4a. Create replication DB users | `repl_dc2` user in both databases | `repl_dc1` user in both databases |
+| 5. Enable publishing | Both databases | Both databases |
+| 6. Add articles | All tables in both databases | All tables in both databases |
+| 7. Create subscriptions | Push to DC2 (using DC2 IP) | Push to DC1 (using DC1 IP) |
+| 8. Verify agents | Agents auto-start with Step 7 | Agents auto-start with Step 7 |
+| 9. Verify replication | Check status + error logs on both | Check status + error logs on both |
+| 10. Test | Insert test rows, verify bidirectional | Insert test rows, verify bidirectional |
