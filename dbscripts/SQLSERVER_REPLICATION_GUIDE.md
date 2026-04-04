@@ -599,44 +599,19 @@ GO
 
 ---
 
-## Step 8: Start Replication Agents
+## Step 8: Verify Agents Are Running
 
-Start the Log Reader Agent and Distribution Agent jobs on **both** servers.
-
-### DC1
+The Log Reader and Distribution Agent jobs are created and started automatically in Step 7 when subscriptions are added. Verify they exist and are enabled:
 
 ```bash
-sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d apim_db -C \
-  -i dbscripts/mssqlcommands/step8_start_apim.sql
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d msdb -C \
+  -i dbscripts/mssqlcommands/step9_agent_jobs.sql
 
-sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d shared_db -C \
-  -i dbscripts/mssqlcommands/step8_start_shared.sql
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d msdb -C \
+  -i dbscripts/mssqlcommands/step9_agent_jobs.sql
 ```
 
-### DC2
-
-```bash
-sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d apim_db -C \
-  -i dbscripts/mssqlcommands/step8_start_apim.sql
-
-sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d shared_db -C \
-  -i dbscripts/mssqlcommands/step8_start_shared.sql
-```
-
-<details><summary>step8_start_apim.sql / step8_start_shared.sql</summary>
-
-```sql
--- step8_start_apim.sql
-EXEC sp_startpublication_snapshot @publication = 'apim_db_pub';
-GO
-
--- step8_start_shared.sql
-EXEC sp_startpublication_snapshot @publication = 'shared_db_pub';
-GO
-```
-</details>
-
-> The Distribution Agent jobs should start automatically. If not, start them from **SQL Server Agent → Jobs** in SSMS.
+You should see replication jobs with `enabled = 1`. If any agents are not running, start them from **SQL Server Agent → Jobs** in SSMS.
 
 ---
 
