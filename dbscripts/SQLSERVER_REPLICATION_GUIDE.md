@@ -105,7 +105,7 @@ Ensure the following on **both** SQL Server VMs:
 
 **Create SQL logins for replication:**
 
-**DC1:**
+**DC1** — create the login that DC2's Distribution Agent will use to push data here:
 ```bash
 sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d master -C \
   -i dbscripts/mssqlcommands/step1_dc1_login.sql
@@ -117,10 +117,24 @@ sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d master -C \
 -- Login for DC2 to connect for replication
 CREATE LOGIN repl_dc2 WITH PASSWORD = 'Repl@2025';
 GO
+
+-- Create database users for the replication login on apim_db and shared_db
+-- (Run AFTER Step 4 creates the databases and tables, but listed here for reference)
+-- These are needed so the Distribution Agent can write replicated data
+USE apim_db;
+GO
+CREATE USER repl_dc2 FOR LOGIN repl_dc2;
+EXEC sp_addrolemember 'db_owner', 'repl_dc2';
+GO
+USE shared_db;
+GO
+CREATE USER repl_dc2 FOR LOGIN repl_dc2;
+EXEC sp_addrolemember 'db_owner', 'repl_dc2';
+GO
 ```
 </details>
 
-**DC2:**
+**DC2** — create the login that DC1's Distribution Agent will use to push data here:
 ```bash
 sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d master -C \
   -i dbscripts/mssqlcommands/step1_dc2_login.sql
@@ -132,8 +146,24 @@ sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d master -C \
 -- Login for DC1 to connect for replication
 CREATE LOGIN repl_dc1 WITH PASSWORD = 'Repl@2025';
 GO
+
+-- Create database users for the replication login on apim_db and shared_db
+-- (Run AFTER Step 4 creates the databases and tables, but listed here for reference)
+-- These are needed so the Distribution Agent can write replicated data
+USE apim_db;
+GO
+CREATE USER repl_dc1 FOR LOGIN repl_dc1;
+EXEC sp_addrolemember 'db_owner', 'repl_dc1';
+GO
+USE shared_db;
+GO
+CREATE USER repl_dc1 FOR LOGIN repl_dc1;
+EXEC sp_addrolemember 'db_owner', 'repl_dc1';
+GO
 ```
 </details>
+
+> **Important:** The `CREATE LOGIN` runs first (Step 1), but the `CREATE USER` / `sp_addrolemember` commands will fail until the databases exist. Run Step 1 login creation first, then after Step 4 (databases + tables created), re-run the same file to create the database users. The `CREATE LOGIN` will error as "already exists" — that's fine, the `CREATE USER` commands will succeed.
 
 ---
 
@@ -465,6 +495,8 @@ GO
 
 ## Step 7: Create Subscriptions (Bidirectional)
 
+> **Important: Use IP addresses, not hostnames.** The `@subscriber` parameter must use the remote server's IP address (not the Windows hostname). Using hostnames causes the Distribution Agent to attempt Named Pipes connections, which fail across Azure VMs. The SQL files use `$(DC2_HOST)` / `$(DC1_HOST)` as sqlcmd variables — pass the IP via `-v` on the command line.
+
 ### 7a. DC1 pushes to DC2
 
 On **DC1**, create push subscriptions to DC2.
@@ -473,6 +505,7 @@ On **DC1**, create push subscriptions to DC2.
 
 ```bash
 sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d apim_db -C \
+  -v DC2_HOST="$DC2_HOST" \
   -i dbscripts/mssqlcommands/step7a_dc1_apim.sql
 ```
 
@@ -480,15 +513,19 @@ sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d apim_db -C \
 
 ```bash
 sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d shared_db -C \
+  -v DC2_HOST="$DC2_HOST" \
   -i dbscripts/mssqlcommands/step7a_dc1_shared.sql
 ```
 
 <details><summary>step7a_dc1_apim.sql</summary>
 
 ```sql
+-- DC1 pushes apim_db to DC2
+-- NOTE: subscriber uses IP address (from $DC2_HOST) to avoid Named Pipes issues
+-- Replace <DC2_IP> with the actual DC2 IP if not using the sqlcmd variable substitution
 EXEC sp_addsubscription
     @publication = 'apim_db_pub',
-    @subscriber = 'apim-4-7-wus2-s',
+    @subscriber = '$(DC2_HOST)',
     @destination_db = 'apim_db',
     @subscription_type = 'push',
     @sync_type = 'none',
@@ -497,7 +534,7 @@ GO
 
 EXEC sp_addpushsubscription_agent
     @publication = 'apim_db_pub',
-    @subscriber = 'apim-4-7-wus2-s',
+    @subscriber = '$(DC2_HOST)',
     @subscriber_db = 'apim_db',
     @subscriber_security_mode = 0,
     @subscriber_login = 'repl_dc1',
@@ -509,9 +546,11 @@ GO
 <details><summary>step7a_dc1_shared.sql</summary>
 
 ```sql
+-- DC1 pushes shared_db to DC2
+-- NOTE: subscriber uses IP address (from $DC2_HOST) to avoid Named Pipes issues
 EXEC sp_addsubscription
     @publication = 'shared_db_pub',
-    @subscriber = 'apim-4-7-wus2-s',
+    @subscriber = '$(DC2_HOST)',
     @destination_db = 'shared_db',
     @subscription_type = 'push',
     @sync_type = 'none',
@@ -520,7 +559,7 @@ GO
 
 EXEC sp_addpushsubscription_agent
     @publication = 'shared_db_pub',
-    @subscriber = 'apim-4-7-wus2-s',
+    @subscriber = '$(DC2_HOST)',
     @subscriber_db = 'shared_db',
     @subscriber_security_mode = 0,
     @subscriber_login = 'repl_dc1',
@@ -537,6 +576,7 @@ On **DC2**, create push subscriptions to DC1.
 
 ```bash
 sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d apim_db -C \
+  -v DC1_HOST="$DC1_HOST" \
   -i dbscripts/mssqlcommands/step7b_dc2_apim.sql
 ```
 
@@ -544,15 +584,18 @@ sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d apim_db -C \
 
 ```bash
 sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d shared_db -C \
+  -v DC1_HOST="$DC1_HOST" \
   -i dbscripts/mssqlcommands/step7b_dc2_shared.sql
 ```
 
 <details><summary>step7b_dc2_apim.sql</summary>
 
 ```sql
+-- DC2 pushes apim_db to DC1
+-- NOTE: subscriber uses IP address (from $DC1_HOST) to avoid Named Pipes issues
 EXEC sp_addsubscription
     @publication = 'apim_db_pub',
-    @subscriber = 'apim-4-7-eus2-s',
+    @subscriber = '$(DC1_HOST)',
     @destination_db = 'apim_db',
     @subscription_type = 'push',
     @sync_type = 'none',
@@ -561,7 +604,7 @@ GO
 
 EXEC sp_addpushsubscription_agent
     @publication = 'apim_db_pub',
-    @subscriber = 'apim-4-7-eus2-s',
+    @subscriber = '$(DC1_HOST)',
     @subscriber_db = 'apim_db',
     @subscriber_security_mode = 0,
     @subscriber_login = 'repl_dc2',
@@ -573,9 +616,11 @@ GO
 <details><summary>step7b_dc2_shared.sql</summary>
 
 ```sql
+-- DC2 pushes shared_db to DC1
+-- NOTE: subscriber uses IP address (from $DC1_HOST) to avoid Named Pipes issues
 EXEC sp_addsubscription
     @publication = 'shared_db_pub',
-    @subscriber = 'apim-4-7-eus2-s',
+    @subscriber = '$(DC1_HOST)',
     @destination_db = 'shared_db',
     @subscription_type = 'push',
     @sync_type = 'none',
@@ -584,7 +629,7 @@ GO
 
 EXEC sp_addpushsubscription_agent
     @publication = 'shared_db_pub',
-    @subscriber = 'apim-4-7-eus2-s',
+    @subscriber = '$(DC1_HOST)',
     @subscriber_db = 'shared_db',
     @subscriber_security_mode = 0,
     @subscriber_login = 'repl_dc2',
@@ -686,6 +731,52 @@ sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d msdb -C \
 
 sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d msdb -C \
   -i dbscripts/mssqlcommands/step9_agent_jobs.sql
+```
+
+### Check replication error logs
+
+If replication isn't working, check the error logs on **both** DCs:
+
+```bash
+# DC1 errors
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d distribution -C \
+  -i dbscripts/mssqlcommands/step9_check_errors.sql
+
+# DC2 errors
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d distribution -C \
+  -i dbscripts/mssqlcommands/step9_check_errors.sql
+```
+
+<details><summary>step9_check_errors.sql</summary>
+
+```sql
+-- Check recent replication errors
+SELECT TOP 10 id, error_text, time
+FROM dbo.MSrepl_errors
+ORDER BY time DESC;
+GO
+```
+</details>
+
+Common errors and fixes:
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `Named Pipes Provider: Could not open a connection` | Subscriber uses hostname instead of IP | Recreate subscription with IP address (Step 7) |
+| `Login failed for user 'repl_dcX'` | Replication login has no database user | Run `CREATE USER` + `sp_addrolemember` on target DB |
+| `Cannot open database "X" requested by the login` | Same as above — login exists but has no DB user | Run `CREATE USER` + `sp_addrolemember` on target DB |
+| `Violation of PRIMARY KEY constraint` | Duplicate row (loopback or stale data) | Check loopback_detection is enabled; clean up duplicate rows |
+
+If a Distribution Agent has stopped due to errors, restart it after fixing the issue:
+
+```bash
+# List agent job names
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d msdb -C \
+  -i dbscripts/mssqlcommands/step9_agent_jobs.sql
+
+# Restart a specific agent job
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d msdb -C \
+  -Q "EXEC sp_start_job @job_name = '<job-name-from-above>';"
 ```
 
 ---
@@ -836,23 +927,48 @@ kubernetes:
 
 ### Check replication agent errors
 
-```sql
--- View replication agent error history
-SELECT * FROM distribution.dbo.MSrepl_errors
-ORDER BY time DESC;
+```bash
+# DC1
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d distribution -C \
+  -i dbscripts/mssqlcommands/step9_check_errors.sql
+
+# DC2
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d distribution -C \
+  -i dbscripts/mssqlcommands/step9_check_errors.sql
+```
+
+### Named Pipes connection errors
+
+If you see `Named Pipes Provider: Could not open a connection to SQL Server`, the subscriber was registered using a hostname that the local machine can't resolve. Fix: drop and recreate the subscription using the subscriber's IP address instead of hostname. See Step 7 for the correct commands.
+
+### Replication login permission errors
+
+If you see `Login failed for user 'repl_dcX'` or `Cannot open database "X"`, the replication login exists but doesn't have a database user on the target databases. Fix:
+
+```bash
+# On the target server (where the login is failing), create users in each database:
+sqlcmd -S <TARGET_HOST>,<PORT> -U <ADMIN_USER> -P <ADMIN_PASS> -C -Q "
+USE apim_db;
+CREATE USER repl_dcX FOR LOGIN repl_dcX;
+EXEC sp_addrolemember 'db_owner', 'repl_dcX';
 GO
+USE shared_db;
+CREATE USER repl_dcX FOR LOGIN repl_dcX;
+EXEC sp_addrolemember 'db_owner', 'repl_dcX';
+GO
+"
 ```
 
 ### Subscription not replicating
 
-```sql
--- Check Distribution Agent status
-EXEC distribution.dbo.sp_replmonitorhelpsubscription
-    @publisher = 'apim-4-7-eus2-s',
-    @publication_type = 0;
-GO
+```bash
+# Check Distribution Agent status on DC1
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d master -C \
+  -i dbscripts/mssqlcommands/step9_dc1_monitor.sql
 
--- If the agent is stopped, restart it from SQL Server Agent Jobs
+# Restart a stopped agent job
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d msdb -C \
+  -Q "EXEC sp_start_job @job_name = '<job-name>';"
 ```
 
 ### IDENTITY conflicts
