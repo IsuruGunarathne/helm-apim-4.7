@@ -7,7 +7,7 @@ Set up bidirectional transactional replication between two SQL Server instances 
 ```
         DC1 (East US 2)                           DC2 (West US 2)
 ┌──────────────────────────┐            ┌──────────────────────────┐
-│  apim-4-7-eus2-sql       │            │  apim-4-7-wus2-sql       │
+│  apim-4-7-eus2-s         │            │  apim-4-7-wus2-s         │
 │  (SQL Server on Azure VM)│            │  (SQL Server on Azure VM)│
 │                          │            │                          │
 │  ┌─────────┐ ┌─────────┐│ Transact.  │┌─────────┐ ┌─────────┐  │
@@ -24,16 +24,16 @@ Set up bidirectional transactional replication between two SQL Server instances 
 
 ```bash
 # DC1 — East US 2
-export DC1_HOST=apim-4-7-eus2-sql
+export DC1_HOST=10.0.3.4
 export DC1_USER=apimadmineast
 export DC1_PORT=1433
-export DC1_PASS="{your-password}"
+export DC1_PASS="distributed@2"
 
 # DC2 — West US 2
-export DC2_HOST=apim-4-7-wus2-sql
+export DC2_HOST=10.1.3.4
 export DC2_USER=apimadminwest
 export DC2_PORT=1433
-export DC2_PASS="{your-password}"
+export DC2_PASS="distributed@2"
 ```
 
 ---
@@ -75,22 +75,18 @@ source ~/.bashrc
 ### Connect to SQL Server
 
 ```bash
-sqlcmd -S <sql-server-private-ip>,1433 -U $DC1_USER -P $DC1_PASS -C
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -C
 ```
 
 The `-C` flag trusts the server certificate (needed for self-signed certs on VMs).
 
-### Run scripts from the jump VM
+### Running SQL files
 
-Copy the `dbscripts/` directory to the jump VM (e.g., via `scp` or `git clone`), then run scripts as shown in Step 4:
+All replication setup commands are available as `.sql` files in `dbscripts/mssqlcommands/`. Clone the repo or copy the directory to the jump VM, then run each step with:
 
 ```bash
-# Example: DC1 tables
-sqlcmd -S <dc1-private-ip>,1433 -U $DC1_USER -P $DC1_PASS -d shared_db -C \
-  -i dbscripts/dc1/SQLServer/mssql/tables.sql
-
-sqlcmd -S <dc1-private-ip>,1433 -U $DC1_USER -P $DC1_PASS -d apim_db -C \
-  -i dbscripts/dc1/SQLServer/mssql/apimgt/tables.sql
+sqlcmd -S <host>,<port> -U <user> -P <pass> -d <database> -C \
+  -i dbscripts/mssqlcommands/<file>.sql
 ```
 
 ---
@@ -107,69 +103,139 @@ Ensure the following on **both** SQL Server VMs:
 | Networking | VNet peering between East US 2 and West US 2, port 1433 open bidirectionally |
 | Linked Server (optional) | Each server can connect to the other via linked server for easier management |
 
-**Create SQL logins on both servers:**
+**Create SQL logins for replication:**
 
-On **DC1**:
+**DC1:**
+```bash
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d master -C \
+  -i dbscripts/mssqlcommands/step1_dc1_login.sql
+```
+
+<details><summary>step1_dc1_login.sql</summary>
+
 ```sql
 -- Login for DC2 to connect for replication
-CREATE LOGIN repl_dc2 WITH PASSWORD = '{replication-password}';
+CREATE LOGIN repl_dc2 WITH PASSWORD = 'Repl@2025';
+GO
+```
+</details>
+
+**DC2:**
+```bash
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d master -C \
+  -i dbscripts/mssqlcommands/step1_dc2_login.sql
 ```
 
-On **DC2**:
+<details><summary>step1_dc2_login.sql</summary>
+
 ```sql
 -- Login for DC1 to connect for replication
-CREATE LOGIN repl_dc1 WITH PASSWORD = '{replication-password}';
+CREATE LOGIN repl_dc1 WITH PASSWORD = 'Repl@2025';
+GO
 ```
+</details>
 
 ---
 
 ## Step 2: Configure Distribution
 
-Each server acts as its own distributor. Run the following on **both** servers.
+Each server acts as its own distributor.
 
 ### DC1
 
+```bash
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -C \
+  -i dbscripts/mssqlcommands/step2_dc1_distribution.sql
+```
+
+<details><summary>step2_dc1_distribution.sql</summary>
+
 ```sql
--- Connect to DC1 via sqlcmd or SSMS
 USE master;
 GO
 
 -- Configure DC1 as its own distributor
 EXEC sp_adddistributor
-    @distributor = 'apim-4-7-eus2-sql',
-    @password = '{distributor-password}';
+    @distributor = 'apim-4-7-eus2-s',
+    @password = 'Dist@2025';
 GO
 
 -- Create the distribution database
 EXEC sp_adddistributiondb
     @database = 'distribution',
-    @security_mode = 0;
+    @security_mode = 1;
+GO
+
+-- Register this server as a publisher using the distribution database
+EXEC sp_adddistpublisher
+    @publisher = 'apim-4-7-eus2-s',
+    @distribution_db = 'distribution',
+    @security_mode = 1;
 GO
 ```
+</details>
 
 ### DC2
 
+```bash
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -C \
+  -i dbscripts/mssqlcommands/step2_dc2_distribution.sql
+```
+
+<details><summary>step2_dc2_distribution.sql</summary>
+
 ```sql
--- Connect to DC2 via sqlcmd or SSMS
 USE master;
 GO
 
 EXEC sp_adddistributor
-    @distributor = 'apim-4-7-wus2-sql',
-    @password = '{distributor-password}';
+    @distributor = 'apim-4-7-wus2-s',
+    @password = 'Dist@2025';
 GO
 
 EXEC sp_adddistributiondb
     @database = 'distribution',
-    @security_mode = 0;
+    @security_mode = 1;
 GO
+
+-- Register this server as a publisher using the distribution database
+EXEC sp_adddistpublisher
+    @publisher = 'apim-4-7-wus2-s',
+    @distribution_db = 'distribution',
+    @security_mode = 1;
+GO
+```
+</details>
+
+If you get errors about the SQL Server Agent not running, make sure to start it and set it to automatic
+
+```powershell
+# RDP into the VM and start it:
+net start SQLSERVERAGENT  
+
+#To make it start automatically on boot:       
+Set-Service -Name SQLSERVERAGENT -StartupType Automatic
 ```
 
 ---
 
 ## Step 3: Create Databases
 
-On **both** servers:
+### DC1
+
+```bash
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -C \
+  -i dbscripts/mssqlcommands/step3_create_dbs.sql
+```
+
+### DC2
+
+```bash
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -C \
+  -i dbscripts/mssqlcommands/step3_create_dbs.sql
+```
+
+<details><summary>step3_create_dbs.sql</summary>
 
 ```sql
 CREATE DATABASE apim_db;
@@ -177,6 +243,7 @@ GO
 CREATE DATABASE shared_db;
 GO
 ```
+</details>
 
 ---
 
@@ -184,22 +251,28 @@ GO
 
 Use the pre-generated DC-specific scripts from the `dbscripts/dc1/` and `dbscripts/dc2/` directories. These have IDENTITY seeds and DCID values already configured per region.
 
-**DC1** (via `sqlcmd`):
+Copy the `dbscripts/` directory to the jump VM (e.g., via `scp` or `git clone`), then run:
+
+**DC1:**
 ```bash
 # shared_db tables
-sqlcmd -S $DC1_HOST -U $DC1_USER -P $DC1_PASS -d shared_db -i dbscripts/dc1/SQLServer/mssql/tables.sql
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d shared_db -C \
+  -i dbscripts/dc1/SQLServer/mssql/tables.sql
 
 # apim_db tables
-sqlcmd -S $DC1_HOST -U $DC1_USER -P $DC1_PASS -d apim_db -i dbscripts/dc1/SQLServer/mssql/apimgt/tables.sql
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d apim_db -C \
+  -i dbscripts/dc1/SQLServer/mssql/apimgt/tables.sql
 ```
 
-**DC2** (via `sqlcmd`):
+**DC2:**
 ```bash
 # shared_db tables
-sqlcmd -S $DC2_HOST -U $DC2_USER -P $DC2_PASS -d shared_db -i dbscripts/dc2/SQLServer/mssql/tables.sql
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d shared_db -C \
+  -i dbscripts/dc2/SQLServer/mssql/tables.sql
 
 # apim_db tables
-sqlcmd -S $DC2_HOST -U $DC2_USER -P $DC2_PASS -d apim_db -i dbscripts/dc2/SQLServer/mssql/apimgt/tables.sql
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d apim_db -C \
+  -i dbscripts/dc2/SQLServer/mssql/apimgt/tables.sql
 ```
 
 **What the DC-specific scripts change:**
@@ -220,42 +293,45 @@ This ensures DC1 generates IDs 1,3,5,7... and DC2 generates 2,4,6,8... — no co
 
 Enable transactional publishing on all 4 databases (apim_db and shared_db on both DCs).
 
-### DC1
+### DC1 — apim_db
+
+```bash
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d apim_db -C \
+  -i dbscripts/mssqlcommands/step5_apim.sql
+```
+
+### DC1 — shared_db
+
+```bash
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d shared_db -C \
+  -i dbscripts/mssqlcommands/step5_shared.sql
+```
+
+### DC2 — apim_db
+
+```bash
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d apim_db -C \
+  -i dbscripts/mssqlcommands/step5_apim.sql
+```
+
+### DC2 — shared_db
+
+```bash
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d shared_db -C \
+  -i dbscripts/mssqlcommands/step5_shared.sql
+```
+
+<details><summary>step5_apim.sql</summary>
 
 ```sql
--- Enable apim_db for publishing
-USE apim_db;
-GO
 EXEC sp_replicationdboption
     @dbname = 'apim_db',
     @optname = 'publish',
     @value = 'true';
 GO
 
--- Create publication for apim_db
 EXEC sp_addpublication
     @publication = 'apim_db_pub',
-    @status = 'active',
-    @allow_push = 'true',
-    @allow_pull = 'true',
-    @independent_agent = 'true',
-    @immediate_sync = 'false',
-    @replicate_ddl = 0,
-    @allow_initialize_from_backup = 'true';
-GO
-
--- Enable shared_db for publishing
-USE shared_db;
-GO
-EXEC sp_replicationdboption
-    @dbname = 'shared_db',
-    @optname = 'publish',
-    @value = 'true';
-GO
-
--- Create publication for shared_db
-EXEC sp_addpublication
-    @publication = 'shared_db_pub',
     @status = 'active',
     @allow_push = 'true',
     @allow_pull = 'true',
@@ -265,33 +341,11 @@ EXEC sp_addpublication
     @allow_initialize_from_backup = 'true';
 GO
 ```
+</details>
 
-### DC2
+<details><summary>step5_shared.sql</summary>
 
 ```sql
--- Enable apim_db for publishing
-USE apim_db;
-GO
-EXEC sp_replicationdboption
-    @dbname = 'apim_db',
-    @optname = 'publish',
-    @value = 'true';
-GO
-
-EXEC sp_addpublication
-    @publication = 'apim_db_pub',
-    @status = 'active',
-    @allow_push = 'true',
-    @allow_pull = 'true',
-    @independent_agent = 'true',
-    @immediate_sync = 'false',
-    @replicate_ddl = 0,
-    @allow_initialize_from_backup = 'true';
-GO
-
--- Enable shared_db for publishing
-USE shared_db;
-GO
 EXEC sp_replicationdboption
     @dbname = 'shared_db',
     @optname = 'publish',
@@ -309,20 +363,45 @@ EXEC sp_addpublication
     @allow_initialize_from_backup = 'true';
 GO
 ```
+</details>
 
 ---
 
 ## Step 6: Add Articles (Tables) to Publications
 
-Add all user tables to each publication on **both** servers. This script dynamically adds every user table to the publication with `@identity_range_management_option = 'none'` (we manage IDENTITY ranges ourselves via DC-specific scripts).
+Add all user tables to each publication. The script dynamically adds every user table with `@identityrangemanagementoption = 'none'` (we manage IDENTITY ranges ourselves via DC-specific scripts).
 
 ### DC1 — apim_db
 
-```sql
-USE apim_db;
-GO
+```bash
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d apim_db -C \
+  -i dbscripts/mssqlcommands/step6_apim.sql
+```
 
--- Add all user tables as articles
+### DC1 — shared_db
+
+```bash
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d shared_db -C \
+  -i dbscripts/mssqlcommands/step6_shared.sql
+```
+
+### DC2 — apim_db
+
+```bash
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d apim_db -C \
+  -i dbscripts/mssqlcommands/step6_apim.sql
+```
+
+### DC2 — shared_db
+
+```bash
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d shared_db -C \
+  -i dbscripts/mssqlcommands/step6_shared.sql
+```
+
+<details><summary>step6_apim.sql</summary>
+
+```sql
 DECLARE @table_name NVARCHAR(256);
 DECLARE table_cursor CURSOR FOR
     SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES
@@ -348,13 +427,11 @@ CLOSE table_cursor;
 DEALLOCATE table_cursor;
 GO
 ```
+</details>
 
-### DC1 — shared_db
+<details><summary>step6_shared.sql</summary>
 
 ```sql
-USE shared_db;
-GO
-
 DECLARE @table_name NVARCHAR(256);
 DECLARE table_cursor CURSOR FOR
     SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES
@@ -380,8 +457,7 @@ CLOSE table_cursor;
 DEALLOCATE table_cursor;
 GO
 ```
-
-Repeat the same on **DC2** for both `apim_db` and `shared_db` (same SQL, just connect to DC2).
+</details>
 
 > **Key:** `@identityrangemanagementoption = 'none'` disables SQL Server's automatic IDENTITY range management, since we handle it ourselves with DC-specific IDENTITY seeds and increments.
 
@@ -389,17 +465,30 @@ Repeat the same on **DC2** for both `apim_db` and `shared_db` (same SQL, just co
 
 ## Step 7: Create Subscriptions (Bidirectional)
 
-### 7a. DC2 subscribes to DC1
+### 7a. DC1 pushes to DC2
 
-On **DC1**, create push subscriptions to DC2:
+On **DC1**, create push subscriptions to DC2.
+
+**DC1 — apim_db → DC2:**
+
+```bash
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d apim_db -C \
+  -i dbscripts/mssqlcommands/step7a_dc1_apim.sql
+```
+
+**DC1 — shared_db → DC2:**
+
+```bash
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d shared_db -C \
+  -i dbscripts/mssqlcommands/step7a_dc1_shared.sql
+```
+
+<details><summary>step7a_dc1_apim.sql</summary>
 
 ```sql
--- DC1: apim_db publication → push to DC2
-USE apim_db;
-GO
 EXEC sp_addsubscription
     @publication = 'apim_db_pub',
-    @subscriber = 'apim-4-7-wus2-sql',
+    @subscriber = 'apim-4-7-wus2-s',
     @destination_db = 'apim_db',
     @subscription_type = 'push',
     @sync_type = 'none',
@@ -408,21 +497,21 @@ GO
 
 EXEC sp_addpushsubscription_agent
     @publication = 'apim_db_pub',
-    @subscriber = 'apim-4-7-wus2-sql',
+    @subscriber = 'apim-4-7-wus2-s',
     @subscriber_db = 'apim_db',
     @subscriber_security_mode = 0,
     @subscriber_login = 'repl_dc1',
-    @subscriber_password = '{replication-password}';
+    @subscriber_password = 'Repl@2025';
 GO
 ```
+</details>
+
+<details><summary>step7a_dc1_shared.sql</summary>
 
 ```sql
--- DC1: shared_db publication → push to DC2
-USE shared_db;
-GO
 EXEC sp_addsubscription
     @publication = 'shared_db_pub',
-    @subscriber = 'apim-4-7-wus2-sql',
+    @subscriber = 'apim-4-7-wus2-s',
     @destination_db = 'shared_db',
     @subscription_type = 'push',
     @sync_type = 'none',
@@ -431,25 +520,39 @@ GO
 
 EXEC sp_addpushsubscription_agent
     @publication = 'shared_db_pub',
-    @subscriber = 'apim-4-7-wus2-sql',
+    @subscriber = 'apim-4-7-wus2-s',
     @subscriber_db = 'shared_db',
     @subscriber_security_mode = 0,
     @subscriber_login = 'repl_dc1',
-    @subscriber_password = '{replication-password}';
+    @subscriber_password = 'Repl@2025';
 GO
 ```
+</details>
 
-### 7b. DC1 subscribes to DC2
+### 7b. DC2 pushes to DC1
 
-On **DC2**, create push subscriptions to DC1:
+On **DC2**, create push subscriptions to DC1.
+
+**DC2 — apim_db → DC1:**
+
+```bash
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d apim_db -C \
+  -i dbscripts/mssqlcommands/step7b_dc2_apim.sql
+```
+
+**DC2 — shared_db → DC1:**
+
+```bash
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d shared_db -C \
+  -i dbscripts/mssqlcommands/step7b_dc2_shared.sql
+```
+
+<details><summary>step7b_dc2_apim.sql</summary>
 
 ```sql
--- DC2: apim_db publication → push to DC1
-USE apim_db;
-GO
 EXEC sp_addsubscription
     @publication = 'apim_db_pub',
-    @subscriber = 'apim-4-7-eus2-sql',
+    @subscriber = 'apim-4-7-eus2-s',
     @destination_db = 'apim_db',
     @subscription_type = 'push',
     @sync_type = 'none',
@@ -458,21 +561,21 @@ GO
 
 EXEC sp_addpushsubscription_agent
     @publication = 'apim_db_pub',
-    @subscriber = 'apim-4-7-eus2-sql',
+    @subscriber = 'apim-4-7-eus2-s',
     @subscriber_db = 'apim_db',
     @subscriber_security_mode = 0,
     @subscriber_login = 'repl_dc2',
-    @subscriber_password = '{replication-password}';
+    @subscriber_password = 'Repl@2025';
 GO
 ```
+</details>
+
+<details><summary>step7b_dc2_shared.sql</summary>
 
 ```sql
--- DC2: shared_db publication → push to DC1
-USE shared_db;
-GO
 EXEC sp_addsubscription
     @publication = 'shared_db_pub',
-    @subscriber = 'apim-4-7-eus2-sql',
+    @subscriber = 'apim-4-7-eus2-s',
     @destination_db = 'shared_db',
     @subscription_type = 'push',
     @sync_type = 'none',
@@ -481,13 +584,14 @@ GO
 
 EXEC sp_addpushsubscription_agent
     @publication = 'shared_db_pub',
-    @subscriber = 'apim-4-7-eus2-sql',
+    @subscriber = 'apim-4-7-eus2-s',
     @subscriber_db = 'shared_db',
     @subscriber_security_mode = 0,
     @subscriber_login = 'repl_dc2',
-    @subscriber_password = '{replication-password}';
+    @subscriber_password = 'Repl@2025';
 GO
 ```
+</details>
 
 > **`@sync_type = 'none'`:** Both databases are freshly created with identical schemas and no data. No snapshot synchronization is needed. This is the SQL Server equivalent of pglogical's `synchronize_data := false`.
 
@@ -499,34 +603,67 @@ GO
 
 Start the Log Reader Agent and Distribution Agent jobs on **both** servers.
 
+### DC1
+
+```bash
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d master -C \
+  -i dbscripts/mssqlcommands/step8_start_agents.sql
+```
+
+### DC2
+
+```bash
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d master -C \
+  -i dbscripts/mssqlcommands/step8_start_agents.sql
+```
+
+<details><summary>step8_start_agents.sql</summary>
+
 ```sql
 -- Start Log Reader Agent for apim_db
 EXEC sp_startpublication_snapshot @publication = 'apim_db_pub';
 GO
 
--- The Distribution Agent jobs should start automatically.
--- If not, start them from SQL Server Agent → Jobs.
+-- Start Log Reader Agent for shared_db
+EXEC sp_startpublication_snapshot @publication = 'shared_db_pub';
+GO
 ```
+</details>
 
-Alternatively, via SQL Server Agent:
-1. Open **SQL Server Management Studio (SSMS)**
-2. Navigate to **SQL Server Agent → Jobs**
-3. Start the Log Reader Agent jobs for each published database
-4. Start the Distribution Agent jobs for each subscription
+> The Distribution Agent jobs should start automatically. If not, start them from **SQL Server Agent → Jobs** in SSMS.
 
 ---
 
 ## Step 9: Verify Replication Status
 
-### Check publication status
+### Check publications on DC1
 
-On **both** servers:
+```bash
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d apim_db -C \
+  -i dbscripts/mssqlcommands/step9_verify_apim.sql
+
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d shared_db -C \
+  -i dbscripts/mssqlcommands/step9_verify_shared.sql
+```
+
+### Check publications on DC2
+
+```bash
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d apim_db -C \
+  -i dbscripts/mssqlcommands/step9_verify_apim.sql
+
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d shared_db -C \
+  -i dbscripts/mssqlcommands/step9_verify_shared.sql
+```
+
+<details><summary>step9_verify_apim.sql</summary>
+
 ```sql
 -- List publications
 EXEC sp_helppublication;
 GO
 
--- List articles in a publication
+-- List articles in the publication
 EXEC sp_helparticle @publication = 'apim_db_pub';
 GO
 
@@ -534,28 +671,40 @@ GO
 EXEC sp_helpsubscription @publication = 'apim_db_pub';
 GO
 ```
+</details>
+
+<details><summary>step9_verify_shared.sql</summary>
+
+```sql
+EXEC sp_helppublication;
+GO
+
+EXEC sp_helparticle @publication = 'shared_db_pub';
+GO
+
+EXEC sp_helpsubscription @publication = 'shared_db_pub';
+GO
+```
+</details>
 
 ### Check replication monitor
 
-```sql
--- Check subscription status
-EXEC distribution.dbo.sp_replmonitorhelpsubscription
-    @publisher = 'apim-4-7-eus2-sql',
-    @publication_type = 0;  -- 0 = transactional
-GO
+```bash
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d master -C \
+  -i dbscripts/mssqlcommands/step9_dc1_monitor.sql
+
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d master -C \
+  -i dbscripts/mssqlcommands/step9_dc2_monitor.sql
 ```
 
-### Check agent job status
+### Check agent job status (on both DCs)
 
-```sql
--- View replication agent jobs
-SELECT name, enabled, date_created, date_modified
-FROM msdb.dbo.sysjobs
-WHERE category_id IN (
-    SELECT category_id FROM msdb.dbo.syscategories
-    WHERE name LIKE 'REPL%'
-);
-GO
+```bash
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d msdb -C \
+  -i dbscripts/mssqlcommands/step9_agent_jobs.sql
+
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d msdb -C \
+  -i dbscripts/mssqlcommands/step9_agent_jobs.sql
 ```
 
 ---
@@ -564,36 +713,40 @@ GO
 
 Insert a test row on DC1 and verify it appears on DC2 (and vice versa).
 
-**DC1 — apim_db:**
-```sql
--- Insert on DC1
-INSERT INTO AM_ALERT_TYPES (ALERT_TYPE_ID, ALERT_TYPE_NAME, STAKE_HOLDER)
-VALUES (999, 'test-dc1-replication', 'admin-dashboard');
-GO
+### DC1 → DC2
 
--- Check on DC2 (should appear within seconds)
--- sqlcmd -S $DC2_HOST -U $DC2_USER -P $DC2_PASS -d apim_db
-SELECT * FROM AM_ALERT_TYPES WHERE ALERT_TYPE_ID = 999;
-GO
+**Insert on DC1:**
+```bash
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d apim_db -C \
+  -i dbscripts/mssqlcommands/step10_dc1_insert.sql
 ```
 
-**DC2 — apim_db:**
-```sql
--- Insert on DC2
-INSERT INTO AM_ALERT_TYPES (ALERT_TYPE_ID, ALERT_TYPE_NAME, STAKE_HOLDER)
-VALUES (998, 'test-dc2-replication', 'admin-dashboard');
-GO
-
--- Check on DC1 (should appear within seconds)
--- sqlcmd -S $DC1_HOST -U $DC1_USER -P $DC1_PASS -d apim_db
-SELECT * FROM AM_ALERT_TYPES WHERE ALERT_TYPE_ID = 998;
-GO
+**Check on DC2** (should appear within seconds):
+```bash
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d apim_db -C \
+  -Q "SELECT * FROM AM_ALERT_TYPES WHERE ALERT_TYPE_ID = 999;"
 ```
 
-**Clean up test data** (run on either DC — will replicate to the other):
-```sql
-DELETE FROM AM_ALERT_TYPES WHERE ALERT_TYPE_ID IN (998, 999);
-GO
+### DC2 → DC1
+
+**Insert on DC2:**
+```bash
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d apim_db -C \
+  -i dbscripts/mssqlcommands/step10_dc2_insert.sql
+```
+
+**Check on DC1** (should appear within seconds):
+```bash
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d apim_db -C \
+  -Q "SELECT * FROM AM_ALERT_TYPES WHERE ALERT_TYPE_ID = 998;"
+```
+
+### Clean up test data
+
+Run on either DC — will replicate to the other:
+```bash
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d apim_db -C \
+  -i dbscripts/mssqlcommands/step10_cleanup.sql
 ```
 
 ---
@@ -634,11 +787,11 @@ wso2:
         apim_db:
           url: "jdbc:sqlserver://<dc1-sql-private-ip>:1433;databaseName=apim_db;encrypt=true;trustServerCertificate=true"
           username: "apimadmineast"
-          password: "{your-password}"
+          password: "distributed@2"
         shared_db:
           url: "jdbc:sqlserver://<dc1-sql-private-ip>:1433;databaseName=shared_db;encrypt=true;trustServerCertificate=true"
           username: "apimadmineast"
-          password: "{your-password}"
+          password: "distributed@2"
 ```
 
 **DC2** — same structure, pointing to DC2's SQL Server private IP with `apimadminwest`.
@@ -714,7 +867,7 @@ GO
 ```sql
 -- Check Distribution Agent status
 EXEC distribution.dbo.sp_replmonitorhelpsubscription
-    @publisher = 'apim-4-7-eus2-sql',
+    @publisher = 'apim-4-7-eus2-s',
     @publication_type = 0;
 GO
 

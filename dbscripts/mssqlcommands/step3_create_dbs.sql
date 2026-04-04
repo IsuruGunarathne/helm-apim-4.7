@@ -1,0 +1,4 @@
+CREATE DATABASE apim_db;
+GO
+CREATE DATABASE shared_db;
+GO

@@ -11,16 +11,16 @@ Reset the `apim_db` and `shared_db` databases on both DCs to a clean state with 
 
 ```bash
 # DC1 — East US 2
-export DC1_HOST=apim-4-7-eus2-sql
+export DC1_HOST=10.0.3.4
 export DC1_USER=apimadmineast
 export DC1_PORT=1433
-export DC1_PASS="{your-password}"
+export DC1_PASS="distributed@2"
 
 # DC2 — West US 2
-export DC2_HOST=apim-4-7-wus2-sql
+export DC2_HOST=10.1.3.4
 export DC2_USER=apimadminwest
 export DC2_PORT=1433
-export DC2_PASS="{your-password}"
+export DC2_PASS="distributed@2"
 ```
 
 ---
@@ -29,11 +29,13 @@ export DC2_PASS="{your-password}"
 
 ### 1.1 Drop subscriptions on DC1
 
-```sql
--- Connect to DC1 apim_db
-USE apim_db;
-GO
+**DC1 — apim_db:**
 
+```bash
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d apim_db -C
+```
+
+```sql
 -- Check existing subscriptions
 EXEC sp_helpsubscription @publication = 'apim_db_pub';
 GO
@@ -41,20 +43,22 @@ GO
 -- Drop subscription to DC2
 EXEC sp_dropsubscription
     @publication = 'apim_db_pub',
-    @subscriber = 'apim-4-7-wus2-sql',
+    @subscriber = 'apim-4-7-wus2-s',
     @destination_db = 'apim_db',
     @article = 'all';
 GO
 ```
 
-```sql
--- Connect to DC1 shared_db
-USE shared_db;
-GO
+**DC1 — shared_db:**
 
+```bash
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d shared_db -C
+```
+
+```sql
 EXEC sp_dropsubscription
     @publication = 'shared_db_pub',
-    @subscriber = 'apim-4-7-wus2-sql',
+    @subscriber = 'apim-4-7-wus2-s',
     @destination_db = 'shared_db',
     @article = 'all';
 GO
@@ -62,27 +66,31 @@ GO
 
 ### 1.2 Drop subscriptions on DC2
 
-```sql
--- Connect to DC2 apim_db
-USE apim_db;
-GO
+**DC2 — apim_db:**
 
+```bash
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d apim_db -C
+```
+
+```sql
 EXEC sp_dropsubscription
     @publication = 'apim_db_pub',
-    @subscriber = 'apim-4-7-eus2-sql',
+    @subscriber = 'apim-4-7-eus2-s',
     @destination_db = 'apim_db',
     @article = 'all';
 GO
 ```
 
-```sql
--- Connect to DC2 shared_db
-USE shared_db;
-GO
+**DC2 — shared_db:**
 
+```bash
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d shared_db -C
+```
+
+```sql
 EXEC sp_dropsubscription
     @publication = 'shared_db_pub',
-    @subscriber = 'apim-4-7-eus2-sql',
+    @subscriber = 'apim-4-7-eus2-s',
     @destination_db = 'shared_db',
     @article = 'all';
 GO
@@ -90,35 +98,71 @@ GO
 
 ### 1.3 Drop publications on both DCs
 
-On **DC1**:
+**DC1 — apim_db:**
+
+```bash
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d apim_db -C
+```
+
 ```sql
-USE apim_db;
-GO
 EXEC sp_droppublication @publication = 'apim_db_pub';
 GO
+```
 
-USE shared_db;
-GO
+**DC1 — shared_db:**
+
+```bash
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d shared_db -C
+```
+
+```sql
 EXEC sp_droppublication @publication = 'shared_db_pub';
 GO
 ```
 
-On **DC2**:
+**DC2 — apim_db:**
+
+```bash
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d apim_db -C
+```
+
 ```sql
-USE apim_db;
-GO
 EXEC sp_droppublication @publication = 'apim_db_pub';
 GO
+```
 
-USE shared_db;
-GO
+**DC2 — shared_db:**
+
+```bash
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d shared_db -C
+```
+
+```sql
 EXEC sp_droppublication @publication = 'shared_db_pub';
 GO
 ```
 
 ### 1.4 Disable publishing on databases
 
-On **both** DCs:
+**DC1:**
+
+```bash
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -C
+```
+
+```sql
+EXEC sp_replicationdboption @dbname = 'apim_db', @optname = 'publish', @value = 'false';
+GO
+EXEC sp_replicationdboption @dbname = 'shared_db', @optname = 'publish', @value = 'false';
+GO
+```
+
+**DC2:**
+
+```bash
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -C
+```
+
 ```sql
 EXEC sp_replicationdboption @dbname = 'apim_db', @optname = 'publish', @value = 'false';
 GO
@@ -128,7 +172,12 @@ GO
 
 ### 1.5 Drop databases on both DCs
 
-On **DC1**:
+**DC1:**
+
+```bash
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -C
+```
+
 ```sql
 USE master;
 GO
@@ -144,7 +193,12 @@ DROP DATABASE shared_db;
 GO
 ```
 
-On **DC2**:
+**DC2:**
+
+```bash
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -C
+```
+
 ```sql
 USE master;
 GO
@@ -162,7 +216,12 @@ GO
 
 ### 1.6 Clean up distribution database (if needed)
 
-On **both** DCs, check for orphaned entries:
+**DC1:**
+
+```bash
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -C
+```
+
 ```sql
 -- Check for stale subscriptions in the distribution database
 USE distribution;
@@ -171,6 +230,22 @@ SELECT * FROM dbo.MSsubscriptions;
 GO
 
 -- Clean up distribution history
+EXEC sp_MSdistribution_cleanup @min_distretention = 0, @max_distretention = 0;
+GO
+```
+
+**DC2:**
+
+```bash
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -C
+```
+
+```sql
+USE distribution;
+GO
+SELECT * FROM dbo.MSsubscriptions;
+GO
+
 EXEC sp_MSdistribution_cleanup @min_distretention = 0, @max_distretention = 0;
 GO
 ```
@@ -202,7 +277,7 @@ Scale APIM pods back up on both DCs. The first startup on fresh databases will i
 After APIM starts on DC1, verify the admin user replicated to DC2:
 
 ```bash
-sqlcmd -S $DC2_HOST -U $DC2_USER -P $DC2_PASS -d shared_db \
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d shared_db -C \
   -Q "SELECT TOP 5 UM_USER_NAME FROM UM_USER;"
 ```
 

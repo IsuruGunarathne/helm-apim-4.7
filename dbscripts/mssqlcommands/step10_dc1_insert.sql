@@ -1,0 +1,3 @@
+INSERT INTO AM_ALERT_TYPES (ALERT_TYPE_ID, ALERT_TYPE_NAME, STAKE_HOLDER)
+VALUES (999, 'test-dc1-replication', 'admin-dashboard');
+GO
