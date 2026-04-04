@@ -606,25 +606,31 @@ Start the Log Reader Agent and Distribution Agent jobs on **both** servers.
 ### DC1
 
 ```bash
-sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d master -C \
-  -i dbscripts/mssqlcommands/step8_start_agents.sql
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d apim_db -C \
+  -i dbscripts/mssqlcommands/step8_start_apim.sql
+
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d shared_db -C \
+  -i dbscripts/mssqlcommands/step8_start_shared.sql
 ```
 
 ### DC2
 
 ```bash
-sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d master -C \
-  -i dbscripts/mssqlcommands/step8_start_agents.sql
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d apim_db -C \
+  -i dbscripts/mssqlcommands/step8_start_apim.sql
+
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d shared_db -C \
+  -i dbscripts/mssqlcommands/step8_start_shared.sql
 ```
 
-<details><summary>step8_start_agents.sql</summary>
+<details><summary>step8_start_apim.sql / step8_start_shared.sql</summary>
 
 ```sql
--- Start Log Reader Agent for apim_db
+-- step8_start_apim.sql
 EXEC sp_startpublication_snapshot @publication = 'apim_db_pub';
 GO
 
--- Start Log Reader Agent for shared_db
+-- step8_start_shared.sql
 EXEC sp_startpublication_snapshot @publication = 'shared_db_pub';
 GO
 ```
