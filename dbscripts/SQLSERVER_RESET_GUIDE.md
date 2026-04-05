@@ -27,63 +27,37 @@ export DC2_PASS="distributed@2"
 
 ## Phase 1: Teardown
 
-> **Important:** Subscriptions were created using IP addresses (not hostnames) in Step 7 of the replication guide. The drop commands below use `${DC2_HOST}` and `${DC1_HOST}` to match. Make sure the environment variables above are set before running.
+### 1.1 Remove all replication from databases
 
-### 1.1 Drop subscriptions on DC1
+> `sp_removedbreplication` forcefully removes all replication objects (subscriptions, publications, articles, and the publish flag) from a database in one shot. This avoids Log Reader Agent lock conflicts that block `sp_droppublication`.
+>
+> If `sp_removedbreplication` fails with a Log Reader lock error, run `sp_replflush` on the affected database first to release the connection.
 
 ```bash
-# DC1 — drop apim_db subscription to DC2
+# DC1 — flush replication connections, then remove
 sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d apim_db -C \
-  -Q "EXEC sp_dropsubscription @publication = 'apim_db_pub', @subscriber = '${DC2_HOST}', @destination_db = 'apim_db', @article = 'all'; GO"
-
-# DC1 — drop shared_db subscription to DC2
-sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d shared_db -C \
-  -Q "EXEC sp_dropsubscription @publication = 'shared_db_pub', @subscriber = '${DC2_HOST}', @destination_db = 'shared_db', @article = 'all'; GO"
-```
-
-### 1.2 Drop subscriptions on DC2
-
-```bash
-# DC2 — drop apim_db subscription to DC1
-sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d apim_db -C \
-  -Q "EXEC sp_dropsubscription @publication = 'apim_db_pub', @subscriber = '${DC1_HOST}', @destination_db = 'apim_db', @article = 'all'; GO"
-
-# DC2 — drop shared_db subscription to DC1
-sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d shared_db -C \
-  -Q "EXEC sp_dropsubscription @publication = 'shared_db_pub', @subscriber = '${DC1_HOST}', @destination_db = 'shared_db', @article = 'all'; GO"
-```
-
-### 1.3 Drop publications on both DCs
-
-```bash
-# DC1
-sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d apim_db -C \
-  -Q "EXEC sp_droppublication @publication = 'apim_db_pub'; GO"
+  -Q "EXEC sp_replflush"
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d master -C \
+  -Q "EXEC sp_removedbreplication @dbname = 'apim_db'"
 
 sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d shared_db -C \
-  -Q "EXEC sp_droppublication @publication = 'shared_db_pub'; GO"
+  -Q "EXEC sp_replflush"
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d master -C \
+  -Q "EXEC sp_removedbreplication @dbname = 'shared_db'"
 
-# DC2
+# DC2 — flush replication connections, then remove
 sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d apim_db -C \
-  -Q "EXEC sp_droppublication @publication = 'apim_db_pub'; GO"
+  -Q "EXEC sp_replflush"
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d master -C \
+  -Q "EXEC sp_removedbreplication @dbname = 'apim_db'"
 
 sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d shared_db -C \
-  -Q "EXEC sp_droppublication @publication = 'shared_db_pub'; GO"
+  -Q "EXEC sp_replflush"
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d master -C \
+  -Q "EXEC sp_removedbreplication @dbname = 'shared_db'"
 ```
 
-### 1.4 Disable publishing on databases
-
-```bash
-# DC1
-sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -C \
-  -Q "EXEC sp_replicationdboption @dbname = 'apim_db', @optname = 'publish', @value = 'false'; GO EXEC sp_replicationdboption @dbname = 'shared_db', @optname = 'publish', @value = 'false'; GO"
-
-# DC2
-sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -C \
-  -Q "EXEC sp_replicationdboption @dbname = 'apim_db', @optname = 'publish', @value = 'false'; GO EXEC sp_replicationdboption @dbname = 'shared_db', @optname = 'publish', @value = 'false'; GO"
-```
-
-### 1.5 Drop databases on both DCs
+### 1.2 Drop databases on both DCs
 
 ```bash
 # DC1
@@ -95,16 +69,22 @@ sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d master -C \
   -Q "ALTER DATABASE apim_db SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE apim_db; ALTER DATABASE shared_db SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE shared_db;"
 ```
 
-### 1.6 Clean up distribution database (if needed)
+### 1.3 Clean up distribution database (if needed)
 
 ```bash
 # DC1
 sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d distribution -C \
-  -Q "SELECT * FROM dbo.MSsubscriptions; GO EXEC sp_MSdistribution_cleanup @min_distretention = 0, @max_distretention = 0; GO"
+  -Q "SELECT * FROM dbo.MSsubscriptions;"
+
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d distribution -C \
+  -Q "EXEC sp_MSdistribution_cleanup @min_distretention = 0, @max_distretention = 0;"
 
 # DC2
 sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d distribution -C \
-  -Q "SELECT * FROM dbo.MSsubscriptions; GO EXEC sp_MSdistribution_cleanup @min_distretention = 0, @max_distretention = 0; GO"
+  -Q "SELECT * FROM dbo.MSsubscriptions;"
+
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d distribution -C \
+  -Q "EXEC sp_MSdistribution_cleanup @min_distretention = 0, @max_distretention = 0;"
 ```
 
 ---
@@ -146,9 +126,13 @@ You should see the `admin` user (created by DC1's first startup) appear on DC2.
 
 ## Troubleshooting
 
+### Log Reader Agent blocks sp_droppublication
+
+If you try `sp_droppublication` or `sp_dropsubscription` individually, you may get: *"Only one Log Reader Agent or log-related procedure can connect to a database at a time."* This happens because the Log Reader Agent holds an active connection. Stopping the agent via `xp_servicecontrol` requires sysadmin and is typically denied. Use `sp_removedbreplication` instead (see Step 1.1) — it bypasses the Log Reader lock.
+
 ### "database is in use" when dropping
 
-Use `SET SINGLE_USER WITH ROLLBACK IMMEDIATE` as shown in Step 1.5. If that still fails:
+Use `SET SINGLE_USER WITH ROLLBACK IMMEDIATE` as shown in Step 1.2. If that still fails:
 
 ```bash
 sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d master -C \
@@ -187,5 +171,5 @@ If the distribution database has stale entries after recreation:
 
 ```bash
 sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d distribution -C \
-  -Q "EXEC sp_MSdistribution_cleanup @min_distretention = 0, @max_distretention = 0; GO"
+  -Q "EXEC sp_MSdistribution_cleanup @min_distretention = 0, @max_distretention = 0;"
 ```
