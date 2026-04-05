@@ -1,0 +1,9 @@
+-- Test insert on DC1
+-- This row should replicate to DC2 within seconds
+SET IDENTITY_INSERT AM_ALERT_TYPES ON;
+GO
+INSERT INTO AM_ALERT_TYPES (ALERT_TYPE_ID, ALERT_TYPE_NAME, STAKE_HOLDER)
+VALUES (999, 'test-dc1', 'publisher');
+GO
+SET IDENTITY_INSERT AM_ALERT_TYPES OFF;
+GO
