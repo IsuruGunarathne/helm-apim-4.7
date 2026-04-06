@@ -149,14 +149,14 @@ sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -C \
 ```bash
 # Set SERVER_NAME to the value from @@SERVERNAME above
 sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d master -C \
-  -v SERVER_NAME="<dc1-servername>" \
+  -v SERVER_NAME="apim-4-7-eus2-s" \
   -i dbscripts/p2p-mssql/step2_dc1_distribution.sql
 ```
 
 **DC2:**
 ```bash
 sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d master -C \
-  -v SERVER_NAME="<dc2-servername>" \
+  -v SERVER_NAME="apim-4-7-wus2-s" \
   -i dbscripts/p2p-mssql/step2_dc2_distribution.sql
 ```
 
