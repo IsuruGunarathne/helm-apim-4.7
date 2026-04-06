@@ -488,6 +488,23 @@ sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d msdb -C \
   -Q "EXEC sp_start_job @job_name = '<job-name>'"
 ```
 
+### Custom stored procedure errors
+
+If you see errors like `Could not find stored procedure 'dbo.i_<TableName><hash>'`, this means articles were added with `@status = 16` in `sp_addarticle`. This tells the Distribution Agent to use auto-generated stored procedures, but since P2P uses `@sync_type = 'replication support only'` (no snapshot), those procedures are never created on the subscriber.
+
+**Fix:** Remove replication (`sp_removedbreplication`), re-add articles WITHOUT `@status = 16`, and recreate subscriptions.
+
+### LSN errors after partial teardown
+
+If you see repeated errors like:
+```
+The specified LSN {00000000:00000000:0000} for repldone log scan occurs before the current start of replication
+```
+
+The Log Reader Agent's LSN pointer is out of sync with the transaction log. This happens when replication is partially torn down and recreated without dropping the database.
+
+**Fix:** Full reset — drop and recreate the databases (follow the [Reset Guide](SQLSERVER_P2P_RESET_GUIDE.md)). Fresh databases have clean transaction logs.
+
 ### IDENTITY conflicts
 
 Verify IDENTITY seeds: DC1 should have `IDENTITY(1,2)` and DC2 should have `IDENTITY(2,2)`:

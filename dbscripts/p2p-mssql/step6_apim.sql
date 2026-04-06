@@ -16,7 +16,7 @@ BEGIN
         @article = @table_name,
         @source_object = @table_name,
         @type = 'logbased',
-        @schema_option = 0x0000000008000001,
+        @schema_option = 0x0000000000000001,
         @identityrangemanagementoption = 'manual';
     FETCH NEXT FROM table_cursor INTO @table_name;
 END

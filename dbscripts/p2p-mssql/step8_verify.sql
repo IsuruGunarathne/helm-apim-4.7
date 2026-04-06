@@ -17,5 +17,5 @@ EXEC distribution.dbo.sp_replmonitorhelpsubscription
 GO
 
 PRINT '=== P2P Originator IDs ===';
-SELECT * FROM distribution.dbo.MSpeer_originatorid_history;
+SELECT * FROM distribution.dbo.MSpeer_lsns;
 GO
