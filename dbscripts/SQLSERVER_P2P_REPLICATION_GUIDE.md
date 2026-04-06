@@ -92,6 +92,27 @@ Ensure the following on **both** SQL Server VMs:
 | Authentication | SQL Server authentication enabled (mixed mode) |
 | Networking | VNet peering between East US 2 and West US 2, port 1433 open bidirectionally |
 
+### Start SQL Server Agent (via RDP)
+
+SQL Server Agent runs the Log Reader and Distribution Agent jobs that move transactions between nodes. It must be running on **both** VMs before configuring replication.
+
+**RDP into each SQL Server VM** and run in PowerShell (as Administrator):
+
+```powershell
+# Start SQL Server Agent
+net start SQLSERVERAGENT
+
+# Set it to start automatically on boot
+Set-Service -Name SQLSERVERAGENT -StartupType Automatic
+
+# Verify it's running
+Get-Service SQLSERVERAGENT
+```
+
+Alternatively, open `services.msc` and start **SQL Server Agent (MSSQLSERVER)**, then set Startup Type to **Automatic**.
+
+> **Important:** If SQL Server Agent is not running, Steps 5-7 will appear to succeed but the replication agent jobs won't actually start. You'll only notice the problem at Step 8 when no agents show as running.
+
 **Create SQL logins for replication:**
 
 **DC1** — create the login that DC2's Distribution Agent will use:
