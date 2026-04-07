@@ -122,13 +122,17 @@ GO
 
 ## Step 5: Run DC-Specific Table Scripts
 
-**On DC1:**
-- `shared_db` > New Query > run `dbscripts/dc1/SQLServer/mssql/tables.sql`
-- `apim_db` > New Query > run `dbscripts/dc1/SQLServer/mssql/apimgt/tables.sql`
+**On DC1** (from jump VM):
+```powershell
+sqlcmd -S apim-4-7-eus2-s -U apimadmineast -P "distributed@2" -d shared_db -i "dbscripts\dc1\SQLServer\mssql\tables.sql"
+sqlcmd -S apim-4-7-eus2-s -U apimadmineast -P "distributed@2" -d apim_db -i "dbscripts\dc1\SQLServer\mssql\apimgt\tables.sql"
+```
 
-**On DC2:**
-- `shared_db` > New Query > run `dbscripts/dc2/SQLServer/mssql/tables.sql`
-- `apim_db` > New Query > run `dbscripts/dc2/SQLServer/mssql/apimgt/tables.sql`
+**On DC2** (from jump VM):
+```powershell
+sqlcmd -S apim-4-7-wus2-s -U apimadminwest -P "distributed@2" -d shared_db -i "dbscripts\dc2\SQLServer\mssql\tables.sql"
+sqlcmd -S apim-4-7-wus2-s -U apimadminwest -P "distributed@2" -d apim_db -i "dbscripts\dc2\SQLServer\mssql\apimgt\tables.sql"
+```
 
 > DC1 uses `IDENTITY(1,2)` (odd), DC2 uses `IDENTITY(2,2)` (even). Don't mix them up.
 
@@ -184,15 +188,6 @@ Right-click `apim_db_pub` > **Properties** > **Subscription Options**:
 
 Click **OK**.
 
-Then run via SQL on DC1 against `apim_db`:
-```sql
-EXEC sp_changepublication
-    @publication = 'apim_db_pub',
-    @property = 'p2p_continue_onconflict',
-    @value = 'true';
-GO
-```
-
 ### Repeat for shared_db
 
 Create `shared_db_pub` on DC1 with the same wizard flow + P2P settings.
@@ -214,11 +209,20 @@ The wizard handles **three things** in one workflow:
    - Connect: `apim-4-7-wus2-s`, SQL Server Auth, `apimadminwest` / `distributed@2`
 4. DC2 appears with a different Originator ID (e.g. `200`). Verify they're unique.
 5. **Connect nodes:** Right-click each node > **Connect to All Displayed Nodes** (bidirectional arrows appear)
-6. **Database initialization**: Select "I have manually ensured that the schema and data are identical"
-7. **Agent Security**:
-   - DC1 → DC2: subscriber login `repl_dc1` / `Repl@2025`
-   - DC2 → DC1: subscriber login `repl_dc2` / `Repl@2025`
-8. **Finish** — expect three green checkmarks:
+6. **Log Reader Agent Security** (one row for DC2):
+   - Click `(...)` on the `apim-4-7-wus2-s` row
+   - Connection to Distributor: **Run under the SQL Server Agent service account** / **By impersonating the process account**
+   - Connection to Publisher: same — **Agent service account** / **impersonate**
+7. **Distribution Agent Security** (two rows, one per subscriber):
+   > **Key:** "Agent for Subscriber" = the agent pushes TO that server. The login must exist **on the subscriber server**.
+   - `apim-4-7-eus2-s` (pushes TO DC1):
+     - Connection to Distributor: **Agent service account** / **impersonate**
+     - Connection to Subscriber: **Using the following SQL Server login** → `repl_dc2` / `Repl@2025` *(exists on DC1)*
+   - `apim-4-7-wus2-s` (pushes TO DC2):
+     - Connection to Distributor: **Agent service account** / **impersonate**
+     - Connection to Subscriber: **Using the following SQL Server login** → `repl_dc1` / `Repl@2025` *(exists on DC2)*
+8. **New Peer Initialization**: Select **"I created the peer database manually"** (first option)
+9. **Finish** — expect three green checkmarks:
    - Creating publication on DC2 — Success
    - Creating subscription for DC2 — Success
    - Creating subscription for DC1 — Success
