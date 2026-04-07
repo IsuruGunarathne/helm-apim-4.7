@@ -84,7 +84,10 @@ RDP into **each** SQL Server VM:
 ## Step 2: Create Replication Logins
 
 **On DC1:** Security > Logins > New Login:
-- Login: `repl_dc2`, SQL Server auth, Password: `Repl@2025`, Uncheck enforce policy, Server Role: `sysadmin`
+- Login: `repl_dc2`, SQL Server auth, 
+- Password: `Repl@2025`, 
+- **Uncheck enforce policy (IMPORTANT)**, 
+- Server Role: `sysadmin`
 
 **On DC2:** Same but login name `repl_dc1`.
 
