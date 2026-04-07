@@ -111,9 +111,9 @@ wso2:
       failureThreshold: 12
     image:
       registry: "docker.io"
-      repository: "wso2/wso2am-acp:4.7.0-alpha"
-      digest: "sha256:90225970479472f1b11d245eee9db9eb2b063c288e3c6d7a1e2b5f0f6d0f966f"
-      imagePullPolicy: IfNotPresent
+      repository: "isurugunarathne/wso2apim:acp-4.7.0-beta"
+      digest: "sha256:5ff06a1b35cc16d573dc5784f6a95639f45c9881fbf938e6bcf31cc391e51f28"
+      imagePullPolicy: Always
     resources:
       requests:
         memory: "4Gi"
