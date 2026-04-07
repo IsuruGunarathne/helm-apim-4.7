@@ -47,7 +47,10 @@ RUN unzip -q -d ${USER_HOME} /tmp/server.zip \
     && if [ -d ${WSO2_SERVER_HOME}/repository/deployment/server/executionplans ]; then \
          cp -r ${WSO2_SERVER_HOME}/repository/deployment/server/executionplans ${USER_HOME}/wso2-tmp/; \
        fi \
-    && rm -f /tmp/server.zip
+    && rm -f /tmp/server.zip \
+    # remove profileSetup.sh — dedicated distributions don't need profile optimization
+    # (the Helm entrypoint checks for this file and skips optimization if absent)
+    && rm -f ${WSO2_SERVER_HOME}/bin/profileSetup.sh ${WSO2_SERVER_HOME}/bin/profileSetup.bat
 
 # copy entrypoint
 COPY --chown=wso2carbon:wso2 docker-entrypoint.sh ${USER_HOME}/

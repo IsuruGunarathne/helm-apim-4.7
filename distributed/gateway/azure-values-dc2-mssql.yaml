@@ -43,7 +43,7 @@ kubernetes:
       emptyDir: {}
   extraVolumeMounts:
     - name: mssql-driver-vol
-      mountPath: /home/wso2carbon/wso2am-universal-gw-4.7.0-alpha/repository/components/lib/mssql-jdbc-12.8.1.jre11.jar
+      mountPath: /home/wso2carbon/wso2am-universal-gw-4.7.0-SNAPSHOT/repository/components/lib/mssql-jdbc-12.8.1.jre11.jar
       subPath: mssql-jdbc-12.8.1.jre11.jar
       readOnly: true
 

@@ -8,6 +8,14 @@ REPO="isurugunarathne/wso2apim"
 
 cd "${SCRIPT_DIR}"
 
+# --- Maven Build ---
+echo "=== Building from source (mvn clean install -DskipTests) ==="
+echo "=== This builds: api-control-plane, gateway, traffic-manager, all-in-one-apim ==="
+cd "${PRODUCT_APIM}"
+mvn clean install -DskipTests -pl api-control-plane,gateway,traffic-manager -am
+cd "${SCRIPT_DIR}"
+
+echo ""
 echo "=== Copying ZIP artifacts from Maven build output ==="
 cp "${PRODUCT_APIM}/api-control-plane/modules/distribution/product/target/wso2am-acp-4.7.0-SNAPSHOT.zip" .
 cp "${PRODUCT_APIM}/gateway/modules/distribution/product/target/wso2am-universal-gw-4.7.0-SNAPSHOT.zip" .
