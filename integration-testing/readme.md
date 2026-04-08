@@ -5,7 +5,7 @@ This guide explains how to run the product-apim integration tests against the di
 ## Architecture
 
 ```
-Your Mac (test runner)                         AKS Cluster (DC1: aks-apim-eus2)
+Your Mac (test runner)                         AKS Cluster (DC1: aks-apim-eus1)
 ┌──────────────────────────┐         ┌──────────────────────────────────┐
 │  mvn test                │         │                                  │
 │                          │         │  CP pod (wso2am-cp-service)      │
@@ -15,7 +15,7 @@ Your Mac (test runner)                         AKS Cluster (DC1: aks-apim-eus2)
 │  SOAP admin clients ─────┼─19443─> │    port-forward HTTPS -> :9443   │
 │  (LoginLogoutClient,     │         │                                  │
 │   UserManagement, etc.)  │         │  Gateway (ingress)               │
-│                          │         │    gw.eus2.apim.example.com:443  │
+│                          │         │    gw.eus1.apim.example.com:443  │
 │  Gateway API calls ──────┼──443──> │                                  │
 │                          │         │  test-backends.apim.svc:8080     │
 │                          │         │    (17 WAR files in Tomcat)      │
@@ -32,7 +32,7 @@ Port 19443 (not 9443) is used because Rancher Desktop's `steve` process occupies
 
 - Docker Desktop with buildx (for building the test-backends image)
 - Maven 3.8+, JDK 17 or 21
-- `kubectl` configured with AKS contexts (`aks-apim-eus2`, `aks-apim-wus2`)
+- `kubectl` configured with AKS contexts (`aks-apim-eus1`, `aks-apim-wus2`)
 - APIM deployed on both DCs
 
 ## Step 1 — Build and Deploy Test Backend Services
@@ -102,17 +102,17 @@ Open **two** terminals (or use `&` to background):
 
 ```bash
 # Terminal 1: HTTP (REST APIs, OAuth tokens)
-kubectl port-forward svc/wso2am-cp-service 9763:9763 -n apim --context aks-apim-eus2
+kubectl port-forward svc/wso2am-cp-service 9763:9763 -n apim --context aks-apim-eus1
 
 # Terminal 2: HTTPS (SOAP admin services — LoginLogoutClient, UserPopulator)
-kubectl port-forward svc/wso2am-cp-service 19443:9443 -n apim --context aks-apim-eus2
+kubectl port-forward svc/wso2am-cp-service 19443:9443 -n apim --context aks-apim-eus1
 ```
 
 Or as background processes:
 
 ```bash
-kubectl port-forward svc/wso2am-cp-service 9763:9763 -n apim --context aks-apim-eus2 &
-kubectl port-forward svc/wso2am-cp-service 19443:9443 -n apim --context aks-apim-eus2 &
+kubectl port-forward svc/wso2am-cp-service 9763:9763 -n apim --context aks-apim-eus1 &
+kubectl port-forward svc/wso2am-cp-service 19443:9443 -n apim --context aks-apim-eus1 &
 ```
 
 ### Verify both work
@@ -139,7 +139,7 @@ The `platform-test-host-config.xsl` transforms `automation.xml` with:
 | publisher-old | `localhost` | 9763 | 19443 | port-forward |
 | keyManager | `localhost` | 9763 | 19443 | port-forward |
 | gateway-mgt | `localhost` | 9763 | 19443 | port-forward |
-| gateway-wrk | `gw.eus2.apim.example.com` | 443 | 443 | ingress (HTTPS) |
+| gateway-wrk | `gw.eus1.apim.example.com` | 443 | 443 | ingress (HTTPS) |
 | backend-server | `test-backends.apim.svc` | 8080 | 8080 | cluster-internal |
 
 If your gateway hostname differs, edit `platform-test-host-config.xsl` in the overrides and re-apply.

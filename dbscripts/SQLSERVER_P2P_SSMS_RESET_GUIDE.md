@@ -7,10 +7,10 @@ Reset `apim_db` and `shared_db` on both DCs to a clean state using **SQL Server 
 ## Architecture
 
 ```
-        DC1 (East US 2)                           DC2 (West US 2)
+        DC1 (East US 1)                           DC2 (West US 2)
 ┌──────────────────────────┐            ┌──────────────────────────┐
 │  SQL Server 2022 Dev     │            │  SQL Server 2022 Dev     │
-│  IP: 10.0.3.4            │            │  IP: 10.1.3.4            │
+│  IP: 10.2.3.4            │            │  IP: 10.1.3.4            │
 │  User: apimadmineast     │   P2P      │  User: apimadminwest     │
 │  Originator ID: 100      │◄──Repl.──►│  Originator ID: 200      │
 │  apim_db + shared_db     │            │  apim_db + shared_db     │
@@ -32,7 +32,7 @@ Reset `apim_db` and `shared_db` on both DCs to a clean state using **SQL Server 
 
 1. Open SSMS
 2. **Object Explorer** > **Connect** > **Database Engine**
-   - Server: `10.0.3.4,1433` | Login: `apimadmineast` (DC1)
+   - Server: `10.2.3.4,1433` | Login: `apimadmineast` (DC1)
    - Server: `10.1.3.4,1433` | Login: `apimadminwest` (DC2)
 3. You should see both servers in the Object Explorer sidebar
 

@@ -24,7 +24,7 @@ The result: an API published in Region A is automatically available in Region B 
 ## Architecture
 
 ```
-          Region 1 (East US 2)                            Region 2 (West US 2)
+          Region 1 (East US 1)                            Region 2 (West US 2)
     ┌─────────────────────────────────┐                ┌─────────────────────────────────┐
     │         AKS Cluster             │   VNet Peering  │         AKS Cluster             │
     │                                 │◄──────────────►│                                 │
@@ -90,10 +90,10 @@ Both subnets live in the same VNet per region. VNet peering connects the two reg
 ### Connection Details Used in This Guide
 
 ```bash
-# Region 1 — East US 2
-DC1_HOST=apim-db-eastus2.postgres.database.azure.com
+# Region 1 — East US 1
+DC1_HOST=apim-db-eastus1.postgres.database.azure.com
 DC1_USER=apimadmin_east
-DC1_AKS_CONTEXT=aks-apim-eastus2
+DC1_AKS_CONTEXT=aks-apim-eastus1
 
 # Region 2 — West US 2
 DC2_HOST=apim-db-westus2.postgres.database.azure.com
@@ -101,7 +101,7 @@ DC2_USER=apimadmin_west
 DC2_AKS_CONTEXT=aks-apim-westus2
 
 # Hostnames (configure in DNS or /etc/hosts later)
-# Region 1: cp.eastus2.example.com, gw.eastus2.example.com
+# Region 1: cp.eastus1.example.com, gw.eastus1.example.com
 # Region 2: cp.westus2.example.com, gw.westus2.example.com
 ```
 
@@ -129,12 +129,12 @@ Set these on **both** PostgreSQL Flexible Server instances (via Azure Portal →
 # Example for Region 1 (repeat for Region 2 with the other server name)
 az postgres flexible-server parameter set \
   --resource-group rg-apim-multi-dc \
-  --server-name apim-db-eastus2 \
+  --server-name apim-db-eastus1 \
   --name wal_level --value logical
 
 az postgres flexible-server parameter set \
   --resource-group rg-apim-multi-dc \
-  --server-name apim-db-eastus2 \
+  --server-name apim-db-eastus1 \
   --name max_worker_processes --value 16
 
 # ... repeat for each parameter
@@ -205,7 +205,7 @@ Each database on each server needs a **node** — this represents the database i
 -- psql connected to Region 1, apim_db
 SELECT pglogical.create_node(
     node_name := 'dc1-apim',
-    dsn := 'host=apim-db-eastus2.postgres.database.azure.com port=5432 dbname=apim_db user=apimadmin_east password=<your-db-password>'
+    dsn := 'host=apim-db-eastus1.postgres.database.azure.com port=5432 dbname=apim_db user=apimadmin_east password=<your-db-password>'
 );
 ```
 
@@ -214,7 +214,7 @@ SELECT pglogical.create_node(
 -- psql connected to Region 1, shared_db
 SELECT pglogical.create_node(
     node_name := 'dc1-shared',
-    dsn := 'host=apim-db-eastus2.postgres.database.azure.com port=5432 dbname=shared_db user=apimadmin_east password=<your-db-password>'
+    dsn := 'host=apim-db-eastus1.postgres.database.azure.com port=5432 dbname=shared_db user=apimadmin_east password=<your-db-password>'
 );
 ```
 
@@ -257,7 +257,7 @@ This is where the magic happens. Each region subscribes to the other's changes.
 SELECT pglogical.create_subscription(
     subscription_name := 'dc2_sub_apim',
     replication_sets := ARRAY['default'],
-    provider_dsn := 'host=apim-db-eastus2.postgres.database.azure.com port=5432 dbname=apim_db user=apimadmin_east password=<your-db-password>',
+    provider_dsn := 'host=apim-db-eastus1.postgres.database.azure.com port=5432 dbname=apim_db user=apimadmin_east password=<your-db-password>',
     synchronize_data := false,
     forward_origins := '{}'
 );
@@ -268,7 +268,7 @@ SELECT pglogical.create_subscription(
 SELECT pglogical.create_subscription(
     subscription_name := 'dc2_sub_shared',
     replication_sets := ARRAY['default'],
-    provider_dsn := 'host=apim-db-eastus2.postgres.database.azure.com port=5432 dbname=shared_db user=apimadmin_east password=<your-db-password>',
+    provider_dsn := 'host=apim-db-eastus1.postgres.database.azure.com port=5432 dbname=shared_db user=apimadmin_east password=<your-db-password>',
     synchronize_data := false,
     forward_origins := '{}'
 );
@@ -343,7 +343,7 @@ helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
 helm repo update
 
 # Region 1
-kubectl config use-context aks-apim-eastus2
+kubectl config use-context aks-apim-eastus1
 helm install ingress-nginx ingress-nginx/ingress-nginx \
   --namespace ingress-nginx --create-namespace \
   --set controller.replicaCount=2 \
@@ -411,7 +411,7 @@ kubernetes:
   ingress:
     controlPlane:
       enabled: true
-      hostname: "cp.eastus2.example.com"           # <-- Region-specific
+      hostname: "cp.eastus1.example.com"           # <-- Region-specific
       annotations:
         kubernetes.io/ingress.class: nginx
         nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
@@ -429,11 +429,11 @@ wso2:
         jdbc:
           driver: "org.postgresql.Driver"
         apim_db:
-          url: "jdbc:postgresql://apim-db-eastus2.postgres.database.azure.com:5432/apim_db?sslmode=require"
+          url: "jdbc:postgresql://apim-db-eastus1.postgres.database.azure.com:5432/apim_db?sslmode=require"
           username: "apimadmin_east"               # <-- Region-specific
           password: "<your-db-password>"
         shared_db:
-          url: "jdbc:postgresql://apim-db-eastus2.postgres.database.azure.com:5432/shared_db?sslmode=require"
+          url: "jdbc:postgresql://apim-db-eastus1.postgres.database.azure.com:5432/shared_db?sslmode=require"
           username: "apimadmin_east"
           password: "<your-db-password>"
 
@@ -444,13 +444,13 @@ wso2:
             gatewayType: "Regular"
             provider: "wso2"
             displayInApiConsole: true
-            description: "Region 1 Gateway - East US 2"  # <-- Region-specific
+            description: "Region 1 Gateway - East US 1"  # <-- Region-specific
             showAsTokenEndpointUrl: true
             serviceName: "wso2am-gw-service"
             servicePort: 9443
-            wsHostname: "gw.eastus2.example.com"          # <-- Region-specific
-            httpHostname: "gw.eastus2.example.com"
-            websubHostname: "gw.eastus2.example.com"
+            wsHostname: "gw.eastus1.example.com"          # <-- Region-specific
+            httpHostname: "gw.eastus1.example.com"
+            websubHostname: "gw.eastus1.example.com"
 
   deployment:
     highAvailability: true        # <-- Deploys 2 CP instances for HA
@@ -485,14 +485,14 @@ kubernetes:
   ingress:
     gateway:
       enabled: true
-      hostname: "gw.eastus2.example.com"
+      hostname: "gw.eastus1.example.com"
 
 wso2:
   apim:
     configurations:
       databases:
         shared_db:
-          url: "jdbc:postgresql://apim-db-eastus2.postgres.database.azure.com:5432/shared_db?sslmode=require"
+          url: "jdbc:postgresql://apim-db-eastus1.postgres.database.azure.com:5432/shared_db?sslmode=require"
           username: "apimadmin_east"
           password: "<your-db-password>"
 
@@ -533,11 +533,11 @@ wso2:
     configurations:
       databases:
         apim_db:
-          url: "jdbc:postgresql://apim-db-eastus2.postgres.database.azure.com:5432/apim_db?sslmode=require"
+          url: "jdbc:postgresql://apim-db-eastus1.postgres.database.azure.com:5432/apim_db?sslmode=require"
           username: "apimadmin_east"
           password: "<your-db-password>"
         shared_db:
-          url: "jdbc:postgresql://apim-db-eastus2.postgres.database.azure.com:5432/shared_db?sslmode=require"
+          url: "jdbc:postgresql://apim-db-eastus1.postgres.database.azure.com:5432/shared_db?sslmode=require"
           username: "apimadmin_east"
           password: "<your-db-password>"
 
@@ -562,10 +562,10 @@ wso2:
 
 Deploy in order: **Control Plane → Traffic Manager → Gateway**. The TM and GW depend on the CP being up first.
 
-### Region 1 (East US 2)
+### Region 1 (East US 1)
 
 ```bash
-kubectl config use-context aks-apim-eastus2
+kubectl config use-context aks-apim-eastus1
 kubectl create namespace apim
 
 # Control Plane (HA — 2 instances)
@@ -627,7 +627,7 @@ Get the NGINX Ingress external IPs and map them to hostnames:
 
 ```bash
 # Region 1
-kubectl config use-context aks-apim-eastus2
+kubectl config use-context aks-apim-eastus1
 DC1_IP=$(kubectl get svc -n ingress-nginx ingress-nginx-controller \
   -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 
@@ -637,11 +637,11 @@ DC2_IP=$(kubectl get svc -n ingress-nginx ingress-nginx-controller \
   -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 
 echo "DNS records (or add to /etc/hosts):"
-echo "$DC1_IP  cp.eastus2.example.com  gw.eastus2.example.com"
+echo "$DC1_IP  cp.eastus1.example.com  gw.eastus1.example.com"
 echo "$DC2_IP  cp.westus2.example.com  gw.westus2.example.com"
 ```
 
-**Quick test** — visit `https://cp.eastus2.example.com/carbon` and accept the self-signed certificate, then open `https://cp.eastus2.example.com/publisher` (admin / admin).
+**Quick test** — visit `https://cp.eastus1.example.com/carbon` and accept the self-signed certificate, then open `https://cp.eastus1.example.com/publisher` (admin / admin).
 
 > **Important:** You must accept the self-signed certificate at `/carbon` first. If you skip this, Publisher and DevPortal will show a "Network Error" page because their internal API calls fail the TLS check.
 
@@ -669,7 +669,7 @@ Each region needs an ILB to expose its CP's JMS port (5672) to the other region 
 
 ```bash
 # Region 1
-kubectl config use-context aks-apim-eastus2
+kubectl config use-context aks-apim-eastus1
 kubectl apply -n apim -f - <<'EOF'
 apiVersion: v1
 kind: Service
@@ -711,7 +711,7 @@ EOF
 
 Get the ILB IPs:
 ```bash
-kubectl config use-context aks-apim-eastus2
+kubectl config use-context aks-apim-eastus1
 DC1_ILB_IP=$(kubectl get svc wso2am-cp-ilb -n apim \
   -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 echo "Region 1 ILB: $DC1_ILB_IP"
@@ -729,7 +729,7 @@ Each region gets a ConfigMap containing 5 event publisher XML files + 1 JNDI pro
 **On Region 1** (publishers point to Region 2):
 
 ```bash
-kubectl config use-context aks-apim-eastus2
+kubectl config use-context aks-apim-eastus1
 
 kubectl create configmap cross-dc-publishers -n apim \
   --from-literal=jndi-region2.properties="
@@ -814,7 +814,7 @@ topic.throttleData = throttleData
 Use `helm upgrade` to add the ConfigMap as volumes in the CP deployment:
 
 ```bash
-kubectl config use-context aks-apim-eastus2
+kubectl config use-context aks-apim-eastus1
 
 APIM_HOME="/home/wso2carbon/wso2am-acp-4.7.0-alpha"
 
@@ -864,7 +864,7 @@ Event publisher asyncWebhooksEventPublisher-1.0.0-Region2 successfully deployed
 
 ## Part 7: Fix OAuth Callback URLs for Region 2
 
-When Region 1 starts first, it registers the Publisher and DevPortal as OAuth applications with callback URLs pointing to `cp.eastus2.example.com`. These registrations get replicated to Region 2 via pglogical. Region 2's Publisher/DevPortal login will fail with:
+When Region 1 starts first, it registers the Publisher and DevPortal as OAuth applications with callback URLs pointing to `cp.eastus1.example.com`. These registrations get replicated to Region 2 via pglogical. Region 2's Publisher/DevPortal login will fail with:
 
 > **"Registered callback does not match with the provided url"**
 
@@ -875,12 +875,12 @@ When Region 1 starts first, it registers the Publisher and DevPortal as OAuth ap
 3. Edit `apim_publisher` > **Inbound Authentication Configuration** > **OAuth/OpenID Connect Configuration** > **Edit**
 4. Update the **Callback Url** to:
    ```
-   regexp=(https://cp.eastus2.example.com/publisher/services/auth/callback/login|https://cp.eastus2.example.com/publisher/services/auth/callback/logout|https://cp.westus2.example.com/publisher/services/auth/callback/login|https://cp.westus2.example.com/publisher/services/auth/callback/logout)
+   regexp=(https://cp.eastus1.example.com/publisher/services/auth/callback/login|https://cp.eastus1.example.com/publisher/services/auth/callback/logout|https://cp.westus2.example.com/publisher/services/auth/callback/login|https://cp.westus2.example.com/publisher/services/auth/callback/logout)
    ```
 5. Click **Update**
 6. Do the same for `apim_devportal`:
    ```
-   regexp=(https://cp.eastus2.example.com/devportal/services/auth/callback/login|https://cp.eastus2.example.com/devportal/services/auth/callback/logout|https://cp.westus2.example.com/devportal/services/auth/callback/login|https://cp.westus2.example.com/devportal/services/auth/callback/logout)
+   regexp=(https://cp.eastus1.example.com/devportal/services/auth/callback/login|https://cp.eastus1.example.com/devportal/services/auth/callback/logout|https://cp.westus2.example.com/devportal/services/auth/callback/login|https://cp.westus2.example.com/devportal/services/auth/callback/logout)
    ```
 7. Click **Update**
 
@@ -894,8 +894,8 @@ This only needs to be done once — the updated callback URLs are stored in `api
 
 | URL | Expected |
 |-----|----------|
-| `https://cp.eastus2.example.com/publisher` | Publisher login works |
-| `https://cp.eastus2.example.com/devportal` | DevPortal login works |
+| `https://cp.eastus1.example.com/publisher` | Publisher login works |
+| `https://cp.eastus1.example.com/devportal` | DevPortal login works |
 | `https://cp.westus2.example.com/publisher` | Publisher login works (after callback fix) |
 | `https://cp.westus2.example.com/devportal` | DevPortal login works (after callback fix) |
 
@@ -913,7 +913,7 @@ This only needs to be done once — the updated callback URLs are stored in `api
 
 ```bash
 # Region 1 Gateway
-curl -sk https://gw.eastus2.example.com/your-api/1.0.0/resource \
+curl -sk https://gw.eastus1.example.com/your-api/1.0.0/resource \
   -H "Internal-Key: <token>"
 
 # Region 2 Gateway

@@ -99,7 +99,7 @@ The full URL that gets called looks like:
 http://wso2am-gw-service.apim.svc:9021/order-events/1.0.0/webhooks_events_receiver_resource?topic=/order_created
 ```
 
-> Uses the cluster-internal gateway service (`wso2am-gw-service`) on the WebSub HTTP port (9021). External hostnames like `gw.eus2.apim.example.com` don't resolve from inside pods. The callback URLs shown in the Publisher portal (under **Topics** > expand a topic) show the external equivalent.
+> Uses the cluster-internal gateway service (`wso2am-gw-service`) on the WebSub HTTP port (9021). External hostnames like `gw.eus1.apim.example.com` don't resolve from inside pods. The callback URLs shown in the Publisher portal (under **Topics** > expand a topic) show the external equivalent.
 
 If `HUB_URL` is not set, `/trigger` still generates an event but logs a warning instead of sending it — useful for local testing.
 
@@ -111,7 +111,7 @@ Then:
 
 Verify:
 ```bash
-kubectl config use-context aks-apim-eus2
+kubectl config use-context aks-apim-eus1
 kubectl get pods -n apim -l app.kubernetes.io/name=webhook-orders
 ```
 
@@ -121,7 +121,7 @@ kubectl get pods -n apim -l app.kubernetes.io/name=webhook-orders
 
 ### Step 1 — Create a WebSub Streaming API (Publisher)
 
-1. Open Publisher: `https://cp.eus2.apim.example.com/publisher`
+1. Open Publisher: `https://cp.eus1.apim.example.com/publisher`
 2. Click **Create API** > **Streaming API** > **WebSub/WebHook API**
 3. Fill in:
    - Name: `OrderEvents`
@@ -148,7 +148,7 @@ kubectl get pods -n apim -l app.kubernetes.io/name=webhook-orders
 
 ### Step 2 — Create Application & Get Access Token (DevPortal)
 
-1. Open DevPortal: `https://cp.eus2.apim.example.com/devportal`
+1. Open DevPortal: `https://cp.eus1.apim.example.com/devportal`
 2. Go to **Applications** > **Add New Application** > name it `OrderEventsApp` > **Save**
    (Or use the `DefaultApplication`)
 3. Find the **OrderEvents** API > click **Subscribe** > select your application > click **Subscribe**
@@ -161,7 +161,7 @@ WebSub subscriptions use a POST with `application/x-www-form-urlencoded` hub par
 
 /order_created
 ```bash
-curl -sk -X POST 'https://gw.eus2.apim.example.com/order-events/1.0.0' \
+curl -sk -X POST 'https://gw.eus1.apim.example.com/order-events/1.0.0' \
   -H 'Content-Type: application/x-www-form-urlencoded' \
   -H 'Authorization: Bearer <ACCESS_TOKEN>' \
   -d 'hub.topic=/order_created' \
@@ -173,7 +173,7 @@ curl -sk -X POST 'https://gw.eus2.apim.example.com/order-events/1.0.0' \
 
 /order_shipped
 ```bash
-curl -sk -X POST 'https://gw.eus2.apim.example.com/order-events/1.0.0' \
+curl -sk -X POST 'https://gw.eus1.apim.example.com/order-events/1.0.0' \
   -H 'Content-Type: application/x-www-form-urlencoded' \
   -H 'Authorization: Bearer <ACCESS_TOKEN>' \
   -d 'hub.topic=/order_shipped' \
@@ -185,7 +185,7 @@ curl -sk -X POST 'https://gw.eus2.apim.example.com/order-events/1.0.0' \
 
 /order_delivered
 ```bash
-curl -sk -X POST 'https://gw.eus2.apim.example.com/order-events/1.0.0' \
+curl -sk -X POST 'https://gw.eus1.apim.example.com/order-events/1.0.0' \
   -H 'Content-Type: application/x-www-form-urlencoded' \
   -H 'Authorization: Bearer <ACCESS_TOKEN>' \
   -d 'hub.topic=/order_delivered' \
@@ -233,7 +233,7 @@ You should see the event logged with its order ID, customer, and total as APIM d
 ### Optional — Unsubscribe from a topic
 
 ```bash
-curl -sk -X POST 'https://gw.eus2.apim.example.com/order-events/1.0.0' \
+curl -sk -X POST 'https://gw.eus1.apim.example.com/order-events/1.0.0' \
   -H 'Content-Type: application/x-www-form-urlencoded' \
   -H 'Authorization: Bearer <ACCESS_TOKEN>' \
   -d 'hub.topic=/order_created' \

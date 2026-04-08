@@ -5,9 +5,9 @@ Set up bidirectional transactional replication between two SQL Server instances 
 ## Architecture
 
 ```
-        DC1 (East US 2)                           DC2 (West US 2)
+        DC1 (East US 1)                           DC2 (West US 2)
 ┌──────────────────────────┐            ┌──────────────────────────┐
-│  apim-4-7-eus2-s         │            │  apim-4-7-wus2-s         │
+│  apim-4-7-eus1-s         │            │  apim-4-7-wus2-s         │
 │  (SQL Server on Azure VM)│            │  (SQL Server on Azure VM)│
 │                          │            │                          │
 │  ┌─────────┐ ┌─────────┐│ Transact.  │┌─────────┐ ┌─────────┐  │
@@ -23,8 +23,8 @@ Set up bidirectional transactional replication between two SQL Server instances 
 ## Connection Details
 
 ```bash
-# DC1 — East US 2
-export DC1_HOST=10.0.3.4
+# DC1 — East US 1
+export DC1_HOST=10.2.3.4
 export DC1_USER=apimadmineast
 export DC1_PORT=1433
 export DC1_PASS="distributed@2"
@@ -100,7 +100,7 @@ Ensure the following on **both** SQL Server VMs:
 | SQL Server Edition | Enterprise or Standard (Enterprise recommended for advanced replication features) |
 | SQL Server Agent | Running and set to auto-start |
 | Authentication | SQL Server authentication enabled (mixed mode) |
-| Networking | VNet peering between East US 2 and West US 2, port 1433 open bidirectionally |
+| Networking | VNet peering between East US 1 and West US 2, port 1433 open bidirectionally |
 | Linked Server (optional) | Each server can connect to the other via linked server for easier management |
 
 **Create SQL logins for replication:**
@@ -158,7 +158,7 @@ GO
 
 -- Configure DC1 as its own distributor
 EXEC sp_adddistributor
-    @distributor = 'apim-4-7-eus2-s',
+    @distributor = 'apim-4-7-eus1-s',
     @password = 'Dist@2025';
 GO
 
@@ -170,7 +170,7 @@ GO
 
 -- Register this server as a publisher using the distribution database
 EXEC sp_adddistpublisher
-    @publisher = 'apim-4-7-eus2-s',
+    @publisher = 'apim-4-7-eus1-s',
     @distribution_db = 'distribution',
     @security_mode = 1;
 GO
@@ -957,7 +957,7 @@ kubernetes:
 
 ## Networking Checklist
 
-- [ ] VNet peering configured between East US 2 and West US 2 VNets
+- [ ] VNet peering configured between East US 1 and West US 2 VNets
 - [ ] SQL Server port 1433 open in NSG/firewall rules for both directions
 - [ ] SQL Server Agent can reach the remote server (required for push subscriptions)
 - [ ] Both servers registered as linked servers (optional, for management convenience)
@@ -1077,7 +1077,7 @@ GO
 
 ## Summary of Operations
 
-| Step | DC1 (East US 2) | DC2 (West US 2) |
+| Step | DC1 (East US 1) | DC2 (West US 2) |
 |------|-----------------|-----------------|
 | 1. Prerequisites | SQL Server Agent running, create `repl_dc2` login | SQL Server Agent running, create `repl_dc1` login |
 | 2. Configure distribution | Self as distributor | Self as distributor |

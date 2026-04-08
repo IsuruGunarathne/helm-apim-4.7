@@ -1,12 +1,12 @@
 # Running Integration Tests on Azure VM with PostgreSQL
 
-Run WSO2 APIM 4.7.0 integration tests in **standalone mode** from an Ubuntu VM on the eus2 vnet,
+Run WSO2 APIM 4.7.0 integration tests in **standalone mode** from an Ubuntu VM on the eus1 vnet,
 using Azure Database for PostgreSQL as the backend databases.
 
 ## Architecture
 
 ```
-Azure VM (Ubuntu 22.04/24.04, eus2 vnet)
+Azure VM (Ubuntu 22.04/24.04, eus1 vnet)
 ┌────────────────────────────────────────────┐
 │  mvn test (standalone mode)                │
 │                                            │
@@ -108,20 +108,20 @@ rm -rf wso2am-4.7.0-SNAPSHOT/
 
 ## Step 5 — Create Test Databases on Azure PostgreSQL
 
-The VM is on the eus2 vnet and can reach the Azure Flexible Server private endpoint directly.
+The VM is on the eus1 vnet and can reach the Azure Flexible Server private endpoint directly.
 No firewall changes are needed.
 
 ### Verify connectivity
 
 ```bash
-nslookup apim-4-7-eus2.postgres.database.azure.com
+nslookup apim-4-7-eus1.postgres.database.azure.com
 # Should resolve to a 10.x.x.x private IP
 ```
 
 ### Create the databases
 
 ```bash
-psql "host=apim-4-7-eus2.postgres.database.azure.com port=5432 dbname=postgres \
+psql "host=apim-4-7-eus1.postgres.database.azure.com port=5432 dbname=postgres \
       user=<admin-user> password=<password> sslmode=require"
 ```
 
@@ -146,12 +146,12 @@ Apply the scripts:
 
 ```bash
 # shared_db schema (user management, registry, etc.)
-psql "host=apim-4-7-eus2.postgres.database.azure.com port=5432 dbname=shared_db \
+psql "host=apim-4-7-eus1.postgres.database.azure.com port=5432 dbname=shared_db \
       user=<admin-user> password=<password> sslmode=require" \
   -f /tmp/apim-schema/wso2am-4.7.0/dbscripts/postgresql.sql
 
 # apim_db schema (API manager tables)
-psql "host=apim-4-7-eus2.postgres.database.azure.com port=5432 dbname=apim_db \
+psql "host=apim-4-7-eus1.postgres.database.azure.com port=5432 dbname=apim_db \
       user=<admin-user> password=<password> sslmode=require" \
   -f /tmp/apim-schema/wso2am-4.7.0/dbscripts/apimgt/postgresql.sql
 ```
@@ -172,12 +172,12 @@ contains H2 entries — replace them with:
 ```xml
 <environmentVariables>
     <SHARED_DATABASE_DRIVER>org.postgresql.Driver</SHARED_DATABASE_DRIVER>
-    <SHARED_DATABASE_URL>jdbc:postgresql://apim-4-7-eus2.postgres.database.azure.com:5432/shared_db?sslmode=require</SHARED_DATABASE_URL>
+    <SHARED_DATABASE_URL>jdbc:postgresql://apim-4-7-eus1.postgres.database.azure.com:5432/shared_db?sslmode=require</SHARED_DATABASE_URL>
     <SHARED_DATABASE_USERNAME>your-admin-user</SHARED_DATABASE_USERNAME>
     <SHARED_DATABASE_PASSWORD>your-password</SHARED_DATABASE_PASSWORD>
     <SHARED_DATABASE_VALIDATION_QUERY>SELECT 1</SHARED_DATABASE_VALIDATION_QUERY>
     <API_MANAGER_DATABASE_DRIVER>org.postgresql.Driver</API_MANAGER_DATABASE_DRIVER>
-    <API_MANAGER_DATABASE_URL>jdbc:postgresql://apim-4-7-eus2.postgres.database.azure.com:5432/apim_db?sslmode=require</API_MANAGER_DATABASE_URL>
+    <API_MANAGER_DATABASE_URL>jdbc:postgresql://apim-4-7-eus1.postgres.database.azure.com:5432/apim_db?sslmode=require</API_MANAGER_DATABASE_URL>
     <API_MANAGER_DATABASE_USERNAME>your-admin-user</API_MANAGER_DATABASE_USERNAME>
     <API_MANAGER_DATABASE_PASSWORD>your-password</API_MANAGER_DATABASE_PASSWORD>
     <API_MANAGER_DATABASE_VALIDATION_QUERY>SELECT 1</API_MANAGER_DATABASE_VALIDATION_QUERY>
@@ -296,7 +296,7 @@ The downside: you can't interact with the process at all once it's backgrounded.
 PostgreSQL databases accumulate state between test runs. For a clean run, recreate them:
 
 ```bash
-PGCONN="host=apim-4-7-eus2.postgres.database.azure.com port=5432 user=<admin-user> password=<password> sslmode=require"
+PGCONN="host=apim-4-7-eus1.postgres.database.azure.com port=5432 user=<admin-user> password=<password> sslmode=require"
 
 # Drop and recreate
 psql "$PGCONN dbname=postgres" -c "DROP DATABASE IF EXISTS apim_db;"
@@ -319,10 +319,10 @@ The driver is missing from the pack. Redo Step 4. Confirm it's at
 
 **`Connection refused` or hostname not resolving**
 ```bash
-nslookup apim-4-7-eus2.postgres.database.azure.com
+nslookup apim-4-7-eus1.postgres.database.azure.com
 ```
 Should return a `10.x.x.x` address. If it returns a public IP, the private endpoint DNS zone
-is not linked to the eus2 vnet — contact the infra team.
+is not linked to the eus1 vnet — contact the infra team.
 
 **SSL/TLS errors**
 Ensure `sslmode=require` is present in both JDBC URLs. Azure PostgreSQL enforces TLS by default.

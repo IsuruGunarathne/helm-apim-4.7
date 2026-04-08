@@ -10,8 +10,8 @@ Reset the `apim_db` and `shared_db` databases on both DCs to a clean state with 
 ## Connection Setup
 
 ```bash
-# DC1 — East US 2
-export DC1_HOST=10.0.3.4
+# DC1 — East US 1
+export DC1_HOST=10.2.3.4
 export DC1_USER=apimadmineast
 export DC1_PORT=1433
 export DC1_PASS="distributed@2"

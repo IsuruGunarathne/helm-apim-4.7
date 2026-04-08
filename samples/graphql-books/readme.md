@@ -187,7 +187,7 @@ curl http://localhost:8000/schema > books.graphql
 
 ### 2. Create the GraphQL API in Publisher
 
-1. Open Publisher: `https://cp.eus2.apim.example.com/publisher` (admin / admin)
+1. Open Publisher: `https://cp.eus1.apim.example.com/publisher` (admin / admin)
 2. Click **Create API** > **Import GraphQL SDL**
 3. Upload the `books.graphql` file downloaded above
 4. Set:
@@ -215,7 +215,7 @@ and copy the access token.
 ### Send a query through the gateway
 
 ```bash
-curl -sk -X POST https://gw.eus2.apim.example.com/graphqlbooks/1.0.0/graphql \
+curl -sk -X POST https://gw.eus1.apim.example.com/graphqlbooks/1.0.0/graphql \
   -H "Authorization: Bearer <TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{"query": "{ books { id title author year } }"}'
@@ -224,7 +224,7 @@ curl -sk -X POST https://gw.eus2.apim.example.com/graphqlbooks/1.0.0/graphql \
 ### Send a mutation through the gateway
 
 ```bash
-curl -sk -X POST https://gw.eus2.apim.example.com/graphqlbooks/1.0.0/graphql \
+curl -sk -X POST https://gw.eus1.apim.example.com/graphqlbooks/1.0.0/graphql \
   -H "Authorization: Bearer <TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{

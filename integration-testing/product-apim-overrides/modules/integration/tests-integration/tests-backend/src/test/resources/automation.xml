@@ -333,7 +333,7 @@
             </instance>
             <instance name="gateway-wrk" type="standalone" nonBlockingTransportEnabled="true">
                 <hosts>
-                    <host type="default">gw.eus2.apim.example.com</host>
+                    <host type="default">gw.eus1.apim.example.com</host>
                 </hosts>
                 <ports>
                     <port type="http">443</port>

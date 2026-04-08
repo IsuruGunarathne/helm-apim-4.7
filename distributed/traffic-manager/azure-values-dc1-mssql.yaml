@@ -60,13 +60,13 @@ wso2:
         jdbc:
           driver: "com.microsoft.sqlserver.jdbc.SQLServerDriver"
         apim_db:
-          url: "jdbc:sqlserver://10.0.3.4:1433;databaseName=apim_db;encrypt=true;trustServerCertificate=true"
+          url: "jdbc:sqlserver://10.2.3.4:1433;databaseName=apim_db;encrypt=true;trustServerCertificate=true"
           username: "apimadmineast"
           password: "distributed@2"
           poolParameters:
             validationQuery: "SELECT 1"
         shared_db:
-          url: "jdbc:sqlserver://10.0.3.4:1433;databaseName=shared_db;encrypt=true;trustServerCertificate=true"
+          url: "jdbc:sqlserver://10.2.3.4:1433;databaseName=shared_db;encrypt=true;trustServerCertificate=true"
           username: "apimadmineast"
           password: "distributed@2"
           poolParameters:

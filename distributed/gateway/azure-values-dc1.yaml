@@ -14,7 +14,7 @@ kubernetes:
     tlsSecret: "apim-ingress-tls"
     gateway:
       enabled: true
-      hostname: "gw.eus2.apim.example.com"
+      hostname: "gw.eus1.apim.example.com"
       annotations:
         kubernetes.io/ingress.class: nginx
         nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
@@ -80,7 +80,7 @@ wso2:
         jdbc:
           driver: "org.postgresql.Driver"
         shared_db:
-          url: "jdbc:postgresql://apim-4-7-eus2.postgres.database.azure.com:5432/shared_db?sslmode=require"
+          url: "jdbc:postgresql://apim-4-7-eus1.postgres.database.azure.com:5432/shared_db?sslmode=require"
           username: "apimadmineast"
           password: "DATABASE_PASSWORD"
           poolParameters:

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-DC1_CONTEXT="aks-apim-eus2"
+DC1_CONTEXT="aks-apim-eus1"
 DC2_CONTEXT="aks-apim-wus2"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 

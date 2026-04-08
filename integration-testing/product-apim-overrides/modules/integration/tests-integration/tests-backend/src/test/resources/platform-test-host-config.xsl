@@ -13,14 +13,14 @@
     <!--setting coverage false-->
     <xsl:template match="xs:coverage/text()">true</xsl:template>
 
-    <!--setting host names — Azure AKS (DC1: eus2) -->
+    <!--setting host names — Azure AKS (DC1: eus1) -->
     <!--CP instances use localhost via kubectl port-forward (HTTP, no TLS) -->
     <xsl:template match="xs:instance[@name='store-old']/xs:hosts/xs:host/text()">localhost</xsl:template>
     <xsl:template match="xs:instance[@name='publisher-old']/xs:hosts/xs:host/text()">localhost</xsl:template>
     <xsl:template match="xs:instance[@name='keyManager']/xs:hosts/xs:host/text()">localhost</xsl:template>
     <xsl:template match="xs:instance[@name='gateway-mgt']/xs:hosts/xs:host/text()">localhost</xsl:template>
     <!--Gateway uses ingress hostname (REST API invocations, still HTTPS) -->
-    <xsl:template match="xs:instance[@name='gateway-wrk']/xs:hosts/xs:host/text()">gw.eus2.apim.example.com</xsl:template>
+    <xsl:template match="xs:instance[@name='gateway-wrk']/xs:hosts/xs:host/text()">gw.eus1.apim.example.com</xsl:template>
     <xsl:template match="xs:instance[@name='backend-server']/xs:hosts/xs:host/text()">test-backends.apim.svc</xsl:template>
 
     <!--setting ports — CP: http=9763 (port-forward), https=19443 (port-forward); gateway on 443 (ingress); backend on 8080 -->

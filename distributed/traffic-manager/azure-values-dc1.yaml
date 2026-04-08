@@ -60,13 +60,13 @@ wso2:
         jdbc:
           driver: "org.postgresql.Driver"
         apim_db:
-          url: "jdbc:postgresql://apim-4-7-eus2.postgres.database.azure.com:5432/apim_db?sslmode=require"
+          url: "jdbc:postgresql://apim-4-7-eus1.postgres.database.azure.com:5432/apim_db?sslmode=require"
           username: "apimadmineast"
           password: "DATABASE_PASSWORD"
           poolParameters:
             validationQuery: "SELECT 1"
         shared_db:
-          url: "jdbc:postgresql://apim-4-7-eus2.postgres.database.azure.com:5432/shared_db?sslmode=require"
+          url: "jdbc:postgresql://apim-4-7-eus1.postgres.database.azure.com:5432/shared_db?sslmode=require"
           username: "apimadmineast"
           password: "DATABASE_PASSWORD"
           poolParameters:

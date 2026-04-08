@@ -73,7 +73,7 @@ Add this to your Claude Desktop config (`~/Library/Application Support/Claude/cl
 Verify:
 ```bash
 # DC1
-kubectl config use-context aks-apim-eus2
+kubectl config use-context aks-apim-eus1
 kubectl get pods -n apim -l app.kubernetes.io/name=mcp-weather
 
 # DC2
@@ -83,7 +83,7 @@ kubectl get pods -n apim -l app.kubernetes.io/name=mcp-weather
 
 ## Register in WSO2 APIM
 
-1. Open Publisher: `https://cp.eus2.apim.example.com/publisher`
+1. Open Publisher: `https://cp.eus1.apim.example.com/publisher`
 2. Click **Create MCP Server** > **MCP Server URL**
 3. Enter: `http://mcp-weather.apim.svc:8000` (no `/mcp` suffix — APIM appends it)
 4. APIM will discover the `get_weather` tool automatically
@@ -98,7 +98,7 @@ kubectl get pods -n apim -l app.kubernetes.io/name=mcp-weather
 
 2. In the Inspector UI:
    - Set transport to **Streamable HTTP**
-   - Enter URL: `https://gw.eus2.apim.example.com/wathermcp/1/mcp`
+   - Enter URL: `https://gw.eus1.apim.example.com/wathermcp/1/mcp`
    - Click **Connect**
    - Go to the **Tools** tab — you should see `get_weather`
    - Call it with `{"location": "New York"}` — you'll get random weather data

@@ -7,7 +7,7 @@ Set up peer-to-peer (P2P) transactional replication between two SQL Server insta
 ## Architecture
 
 ```
-        DC1 (East US 2)                           DC2 (West US 2)
+        DC1 (East US 1)                           DC2 (West US 2)
 ┌──────────────────────────┐            ┌──────────────────────────┐
 │  SQL Server 2022 Dev     │            │  SQL Server 2022 Dev     │
 │  (Azure VM)              │            │  (Azure VM)              │
@@ -26,8 +26,8 @@ Set up peer-to-peer (P2P) transactional replication between two SQL Server insta
 ## Connection Details
 
 ```bash
-# DC1 — East US 2
-export DC1_HOST=10.0.3.4
+# DC1 — East US 1
+export DC1_HOST=10.2.3.4
 export DC1_USER=apimadmineast
 export DC1_PORT=1433
 export DC1_PASS="distributed@2"
@@ -90,7 +90,7 @@ Ensure the following on **both** SQL Server VMs:
 | SQL Server Edition | **Enterprise or Developer** (P2P requires Enterprise features) |
 | SQL Server Agent | Running and set to auto-start |
 | Authentication | SQL Server authentication enabled (mixed mode) |
-| Networking | VNet peering between East US 2 and West US 2, port 1433 open bidirectionally |
+| Networking | VNet peering between East US 1 and West US 2, port 1433 open bidirectionally |
 
 ### Start SQL Server Agent (via RDP)
 
@@ -149,7 +149,7 @@ sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -C \
 ```bash
 # Set SERVER_NAME to the value from @@SERVERNAME above
 sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d master -C \
-  -v SERVER_NAME="apim-4-7-eus2-s" \
+  -v SERVER_NAME="apim-4-7-eus1-s" \
   -i dbscripts/p2p-mssql/step2_dc1_distribution.sql
 ```
 
@@ -552,7 +552,7 @@ GO
 
 ## Networking Checklist
 
-- [ ] VNet peering configured between East US 2 and West US 2 VNets
+- [ ] VNet peering configured between East US 1 and West US 2 VNets
 - [ ] SQL Server port 1433 open in NSG/firewall rules bidirectionally
 - [ ] SQL Server Agent can reach the remote server (push subscriptions)
 - [ ] Use private IP addresses for subscriber names (avoid Named Pipes)
@@ -562,7 +562,7 @@ GO
 
 ## Summary of Operations
 
-| Step | DC1 (East US 2) | DC2 (West US 2) |
+| Step | DC1 (East US 1) | DC2 (West US 2) |
 |------|-----------------|-----------------|
 | 1. Prerequisites | SQL Agent running, create `repl_dc2` login | SQL Agent running, create `repl_dc1` login |
 | 2. Configure distribution | Self as distributor | Self as distributor |

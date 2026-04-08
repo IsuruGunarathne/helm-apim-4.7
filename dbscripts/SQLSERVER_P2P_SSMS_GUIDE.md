@@ -7,10 +7,10 @@ Set up P2P transactional replication between two SQL Server 2022 instances using
 ## Architecture
 
 ```
-        DC1 (East US 2)                           DC2 (West US 2)
+        DC1 (East US 1)                           DC2 (West US 2)
 ┌──────────────────────────┐            ┌──────────────────────────┐
 │  SQL Server 2022 Dev     │            │  SQL Server 2022 Dev     │
-│  IP: 10.0.3.4            │            │  IP: 10.1.3.4            │
+│  IP: 10.2.3.4            │            │  IP: 10.1.3.4            │
 │  User: apimadmineast     │   P2P      │  User: apimadminwest     │
 │  Originator ID: 100      │◄──Repl.──►│  Originator ID: 200      │
 │  IDENTITY: 1,3,5,7...   │            │  IDENTITY: 2,4,6,8...   │
@@ -36,9 +36,9 @@ SSMS replication wizards require **hostnames** (from `@@SERVERNAME`), not IPs. V
 
 Open **Notepad as Administrator** > File > Open > `C:\Windows\System32\drivers\etc\hosts` (set filter to "All Files"):
 
-**Jump VM** (if in West US 2, add the East US 2 server):
+**Jump VM** (if in West US 2, add the East US 1 server):
 ```
-10.0.3.4 apim-4-7-eus2-s
+10.2.3.4 apim-4-7-eus1-s
 ```
 
 **DC1 VM** — add DC2:
@@ -48,7 +48,7 @@ Open **Notepad as Administrator** > File > Open > `C:\Windows\System32\drivers\e
 
 **DC2 VM** — add DC1:
 ```
-10.0.3.4 apim-4-7-eus2-s
+10.2.3.4 apim-4-7-eus1-s
 ```
 
 Verify on each SQL Server VM:
@@ -75,7 +75,7 @@ RDP into **each** SQL Server VM:
 > **Use hostnames (from `@@SERVERNAME`), not IPs.** Connecting via IP (with or without port) causes "must be enabled as a Publisher" errors because the distributor registers the server by its `@@SERVERNAME` hostname. The hosts file entries in the Prerequisites ensure these hostnames resolve from the jump VM and across VNets.
 
 1. SSMS > **Connect > Database Engine**
-   - Server: `apim-4-7-eus2-s`, Auth: SQL Server, Login: `apimadmineast` / `distributed@2`
+   - Server: `apim-4-7-eus1-s`, Auth: SQL Server, Login: `apimadmineast` / `distributed@2`
 2. **Connect > Database Engine** again
    - Server: `apim-4-7-wus2-s`, Auth: SQL Server, Login: `apimadminwest` / `distributed@2`
 
@@ -127,8 +127,8 @@ GO
 
 **On DC1** (from jump VM):
 ```powershell
-sqlcmd -S apim-4-7-eus2-s -U apimadmineast -P "distributed@2" -d shared_db -i "dbscripts\dc1\SQLServer\mssql\tables.sql"
-sqlcmd -S apim-4-7-eus2-s -U apimadmineast -P "distributed@2" -d apim_db -i "dbscripts\dc1\SQLServer\mssql\apimgt\tables.sql"
+sqlcmd -S apim-4-7-eus1-s -U apimadmineast -P "distributed@2" -d shared_db -i "dbscripts\dc1\SQLServer\mssql\tables.sql"
+sqlcmd -S apim-4-7-eus1-s -U apimadmineast -P "distributed@2" -d apim_db -i "dbscripts\dc1\SQLServer\mssql\apimgt\tables.sql"
 ```
 
 **On DC2** (from jump VM):
@@ -211,21 +211,22 @@ The wizard handles **three things** in one workflow:
 3. **Add DC2:** Right-click empty area > **Add a New Peer Node**
    - Connect: `apim-4-7-wus2-s`, SQL Server Auth, `apimadminwest` / `distributed@2`
 4. DC2 appears with a different Originator ID (e.g. `200`). Verify they're unique.
-5. **Connect nodes:** Right-click each node > **Connect to All Displayed Nodes** (bidirectional arrows appear)
-6. **Log Reader Agent Security** (one row for DC2):
+5. Select `apim_db` as the database
+6. **Connect nodes:** Right-click each node > **Connect to All Displayed Nodes** (bidirectional arrows appear)
+7. **Log Reader Agent Security** (one row for DC2):
    - Click `(...)` on the `apim-4-7-wus2-s` row
    - Connection to Distributor: **Run under the SQL Server Agent service account** / **By impersonating the process account**
    - Connection to Publisher: same — **Agent service account** / **impersonate**
-7. **Distribution Agent Security** (two rows, one per subscriber):
-   > **Key:** "Agent for Subscriber" = the agent pushes TO that server. The login must exist **on the subscriber server**.
-   - `apim-4-7-eus2-s` (pushes TO DC1):
-     - Connection to Distributor: **Agent service account** / **impersonate**
-     - Connection to Subscriber: **Using the following SQL Server login** → `repl_dc2` / `Repl@2025` *(exists on DC1)*
-   - `apim-4-7-wus2-s` (pushes TO DC2):
+8. **Distribution Agent Security** (two rows, one per peer):
+   > **Key:** "Agent for Subscriber" = the agent that **runs on** that server's distributor, pushing its data to the other peer. The login must exist on the **remote** (target) server.
+   - `apim-4-7-eus1-s` (DC1 agent pushes TO DC2):
      - Connection to Distributor: **Agent service account** / **impersonate**
      - Connection to Subscriber: **Using the following SQL Server login** → `repl_dc1` / `Repl@2025` *(exists on DC2)*
-8. **New Peer Initialization**: Select **"I created the peer database manually"** (first option)
-9. **Finish** — expect three green checkmarks:
+   - `apim-4-7-wus2-s` (DC2 agent pushes TO DC1):
+     - Connection to Distributor: **Agent service account** / **impersonate**
+     - Connection to Subscriber: **Using the following SQL Server login** → `repl_dc2` / `Repl@2025` *(exists on DC1)*
+9. **New Peer Initialization**: Select **"I created the peer database manually"** (first option)
+10. **Finish** — expect three green checkmarks:
    - Creating publication on DC2 — Success
    - Creating subscription for DC2 — Success
    - Creating subscription for DC1 — Success
@@ -338,7 +339,7 @@ USE master; EXEC sp_removedbreplication @dbname = 'apim_db'; GO
 | Step | Action | DC1 | DC2 |
 |------|--------|-----|-----|
 | Pre | Hosts file + SQL Agent | Add DC2 hostname, start Agent | Add DC1 hostname, start Agent |
-| 1 | Connect in SSMS | `apim-4-7-eus2-s` | `apim-4-7-wus2-s` |
+| 1 | Connect in SSMS | `apim-4-7-eus1-s` | `apim-4-7-wus2-s` |
 | 2 | Replication logins | `repl_dc2` | `repl_dc1` |
 | 3 | Configure distribution | Self as distributor | Self as distributor |
 | 4 | Create databases | `apim_db`, `shared_db` + snapshot isolation | Same |

@@ -14,7 +14,7 @@ kubernetes:
     tlsSecret: "apim-ingress-tls"
     controlPlane:
       enabled: true
-      hostname: "cp.eus2.apim.example.com"
+      hostname: "cp.eus1.apim.example.com"
       annotations:
         kubernetes.io/ingress.class: nginx
         nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
@@ -75,13 +75,13 @@ wso2:
         jdbc:
           driver: "com.microsoft.sqlserver.jdbc.SQLServerDriver"
         apim_db:
-          url: "jdbc:sqlserver://10.0.3.4:1433;databaseName=apim_db;encrypt=true;trustServerCertificate=true"
+          url: "jdbc:sqlserver://10.2.3.4:1433;databaseName=apim_db;encrypt=true;trustServerCertificate=true"
           username: "apimadmineast"
           password: "distributed@2"
           poolParameters:
             validationQuery: "SELECT 1"
         shared_db:
-          url: "jdbc:sqlserver://10.0.3.4:1433;databaseName=shared_db;encrypt=true;trustServerCertificate=true"
+          url: "jdbc:sqlserver://10.2.3.4:1433;databaseName=shared_db;encrypt=true;trustServerCertificate=true"
           username: "apimadmineast"
           password: "distributed@2"
           poolParameters:
@@ -95,13 +95,13 @@ wso2:
             gatewayType: "Regular"
             provider: "wso2"
             displayInApiConsole: true
-            description: "DC1 Gateway - East US 2"
+            description: "DC1 Gateway - East US 1"
             showAsTokenEndpointUrl: true
             serviceName: "wso2am-gw-service"
             servicePort: 9443
-            wsHostname: "gw.eus2.apim.example.com"
-            httpHostname: "gw.eus2.apim.example.com"
-            websubHostname: "gw.eus2.apim.example.com"
+            wsHostname: "gw.eus1.apim.example.com"
+            httpHostname: "gw.eus1.apim.example.com"
+            websubHostname: "gw.eus1.apim.example.com"
 
   deployment:
     highAvailability: true

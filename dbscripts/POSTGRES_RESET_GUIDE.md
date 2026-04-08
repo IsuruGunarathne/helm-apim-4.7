@@ -10,8 +10,8 @@ Reset the `apim_db` and `shared_db` databases on both DCs to a clean state with 
 ## Connection Setup
 
 ```bash
-# DC1 — East US 2
-export DC1_HOST=apim-4-7-eus2.postgres.database.azure.com
+# DC1 — East US 1
+export DC1_HOST=apim-4-7-eus1.postgres.database.azure.com
 export DC1_USER=apimadmineast
 export DC1_PORT=5432
 export DC1_PASS="{your-password}"

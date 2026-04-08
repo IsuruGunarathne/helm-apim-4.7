@@ -88,7 +88,7 @@ curl -X POST http://localhost:8000/ \
 Verify:
 ```bash
 # DC1
-kubectl config use-context aks-apim-eus2
+kubectl config use-context aks-apim-eus1
 kubectl get pods -n apim -l app.kubernetes.io/name=soap-calculator
 
 # DC2
@@ -102,7 +102,7 @@ kubectl get pods -n apim -l app.kubernetes.io/name=soap-calculator
 
 ### 1.1 Create the SOAP API
 
-1. Open Publisher: `https://cp.eus2.apim.example.com/publisher` (admin / admin)
+1. Open Publisher: `https://cp.eus1.apim.example.com/publisher` (admin / admin)
 2. Click **Create API** > **Import WSDL**
 3. Select **WSDL URL** and enter: `http://soap-calculator.apim.svc:8000/?wsdl`
 4. Click **Next**
@@ -116,7 +116,7 @@ kubectl get pods -n apim -l app.kubernetes.io/name=soap-calculator
 
 ### 1.2 Verify WSDL in DevPortal
 
-1. Open DevPortal: `https://cp.eus2.apim.example.com/devportal`
+1. Open DevPortal: `https://cp.eus1.apim.example.com/devportal`
 2. Find the **Calculator** API > click it
 3. On the **Overview** page, verify:
    - **Download WSDL** button is available
@@ -142,7 +142,7 @@ kubectl get pods -n apim -l app.kubernetes.io/name=soap-calculator
 2. Click **Copy WSDL URL**
 3. Inspect the URL — it should now contain `exp` and `sig` query parameters:
    ```
-   https://gw.eus2.apim.example.com/calculator/1.0.0?wsdl&exp=1711234567&sig=abc123...
+   https://gw.eus1.apim.example.com/calculator/1.0.0?wsdl&exp=1711234567&sig=abc123...
    ```
 4. Paste in browser — it should return the WSDL XML (the signature is still valid)
 
@@ -159,7 +159,7 @@ kubectl get pods -n apim -l app.kubernetes.io/name=soap-calculator
 
 ### 3.1 Create a tenant
 
-1. Go to Carbon: `https://cp.eus2.apim.example.com/carbon` (admin / admin)
+1. Go to Carbon: `https://cp.eus1.apim.example.com/carbon` (admin / admin)
 2. Navigate to **Configure** > **Multitenancy** > **Add New Tenant**
 3. Fill in:
    - Domain: `test.com`
@@ -169,7 +169,7 @@ kubectl get pods -n apim -l app.kubernetes.io/name=soap-calculator
 
 ### 3.2 Create SOAP API as tenant
 
-1. Open Publisher as tenant: `https://cp.eus2.apim.example.com/publisher`
+1. Open Publisher as tenant: `https://cp.eus1.apim.example.com/publisher`
 2. Log in as `admin@test.com` / `admin123`
 3. Create a SOAP API the same way as Scenario 1 (WSDL URL: `http://soap-calculator.apim.svc:8000/?wsdl`)
 4. Deploy and Publish
@@ -188,7 +188,7 @@ kubectl get pods -n apim -l app.kubernetes.io/name=soap-calculator
 
 ### 4.1 Verify operations listing
 
-1. Open DevPortal: `https://cp.eus2.apim.example.com/devportal`
+1. Open DevPortal: `https://cp.eus1.apim.example.com/devportal`
 2. Go to the **Calculator** API
 3. Go to the **Documents** tab
 4. Verify that SOAP operations are listed as a default document, showing:
@@ -212,7 +212,7 @@ If you want to test the SOAP API end-to-end through the gateway:
 ### Send a SOAP request
 
 ```bash
-curl -sk -X POST https://gw.eus2.apim.example.com/calculator/1.0.0 \
+curl -sk -X POST https://gw.eus1.apim.example.com/calculator/1.0.0 \
   -H "Authorization: Bearer <TOKEN>" \
   -H "Content-Type: text/xml" \
   -H "SOAPAction: \"Add\"" \

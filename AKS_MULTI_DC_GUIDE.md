@@ -1,15 +1,15 @@
 # Multi-DC Deployment on AKS — WSO2 API Manager 4.7
 
-Deploy WSO2 APIM 4.7 in distributed HA mode across two Azure regions (East US 2 and West US 2) with bi-directional database replication.
+Deploy WSO2 APIM 4.7 in distributed HA mode across two Azure regions (East US 1 and West US 2) with bi-directional database replication.
 
 ## Architecture
 
 ```
-          DC1 VNet (East US 2)                                DC2 VNet (West US 2)
+          DC1 VNet (East US 1)                                DC2 VNet (West US 2)
     ┌─────────────────────────────────┐                ┌─────────────────────────────────┐
     │                                 │   VNet Peering  │                                 │
     │  ┌─ AKS subnet (x.x.2.0/24) ─┐│◄──────────────►│┌─ AKS subnet (x.x.2.0/24) ─┐  │
-    │  │ AKS: aks-apim-eus2         ││                 ││ AKS: aks-apim-wus2         │  │
+    │  │ AKS: aks-apim-eus1         ││                 ││ AKS: aks-apim-wus2         │  │
     │  │                            ││   JMS (5672)    ││                            │  │
     │  │ CP-1 ──┐ wso2am-cp-service ││◄───────────────►││ wso2am-cp-service ┌── CP-1 │  │
     │  │ CP-2 ──┤ (ILB for cross-DC)││                 ││ (ILB for cross-DC)├── CP-2 │  │
@@ -21,7 +21,7 @@ Deploy WSO2 APIM 4.7 in distributed HA mode across two Azure regions (East US 2 
     │  └────────────────────────────┘│                 │└────────────────────────────┘  │
     │                                 │                 │                                 │
     │  ┌─ DB subnet (x.x.0.0/24) ──┐│                 │┌─ DB subnet (x.x.0.0/24) ──┐  │
-    │  │ apim-4-7-eus2.postgres.    ││  pglogical      ││ apim-4-7-wus2.postgres.    │  │
+    │  │ apim-4-7-eus1.postgres.    ││  pglogical      ││ apim-4-7-wus2.postgres.    │  │
     │  │ database.azure.com         ││◄───────────────►││ database.azure.com         │  │
     │  │ apim_db + shared_db        ││  bi-directional ││ apim_db + shared_db        │  │
     │  └────────────────────────────┘│                 │└────────────────────────────┘  │
@@ -61,7 +61,7 @@ Deploy AKS clusters into the **same VNets** as the PostgreSQL Flexible Servers. 
 RG="rg-WSO2-APIM-4.7.0-release-isuruguna"
 
 # Find existing DB VNet names
-DC1_VNET_NAME=$(az network vnet list --resource-group $RG --query "[?location=='eastus2'].name" -o tsv)
+DC1_VNET_NAME=$(az network vnet list --resource-group $RG --query "[?location=='eastus1'].name" -o tsv)
 DC2_VNET_NAME=$(az network vnet list --resource-group $RG --query "[?location=='westus2'].name" -o tsv)
 
 echo "DC1 VNet: $DC1_VNET_NAME"
@@ -91,11 +91,11 @@ az network vnet subnet create \
 DC1_AKS_SUBNET_ID=$(az network vnet subnet show --resource-group $RG --vnet-name $DC1_VNET_NAME --name aks-subnet --query id -o tsv)
 DC2_AKS_SUBNET_ID=$(az network vnet subnet show --resource-group $RG --vnet-name $DC2_VNET_NAME --name aks-subnet --query id -o tsv)
 
-# DC1 — East US 2
+# DC1 — East US 1
 az aks create \
   --resource-group $RG \
-  --name aks-apim-eus2 \
-  --location eastus2 \
+  --name aks-apim-eus1 \
+  --location eastus1 \
   --node-count 3 \
   --node-vm-size Standard_D4s_v3 \
   --network-plugin azure \
@@ -122,7 +122,7 @@ az aks create \
 
 ```bash
 # DC1
-az aks get-credentials --resource-group $RG --name aks-apim-eus2 --context aks-apim-eus2
+az aks get-credentials --resource-group $RG --name aks-apim-eus1 --context aks-apim-eus1
 
 # DC2
 az aks get-credentials --resource-group $RG --name aks-apim-wus2 --context aks-apim-wus2
@@ -130,7 +130,7 @@ az aks get-credentials --resource-group $RG --name aks-apim-wus2 --context aks-a
 
 Switch between clusters:
 ```bash
-kubectl config use-context aks-apim-eus2  # DC1
+kubectl config use-context aks-apim-eus1  # DC1
 kubectl config use-context aks-apim-wus2  # DC2
 ```
 
@@ -139,7 +139,7 @@ kubectl config use-context aks-apim-wus2  # DC2
 On **both** clusters:
 ```bash
 # DC1
-kubectl config use-context aks-apim-eus2
+kubectl config use-context aks-apim-eus1
 helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
 helm repo update
 helm install ingress-nginx ingress-nginx/ingress-nginx \
@@ -168,13 +168,13 @@ AKS creates its own NSG in the managed resource group (`MC_*`). Add inbound rule
 
 ```bash
 # Find the AKS-managed NSG names
-DC1_MC_RG=$(az aks show --resource-group $RG --name aks-apim-eus2 --query nodeResourceGroup -o tsv)
+DC1_MC_RG=$(az aks show --resource-group $RG --name aks-apim-eus1 --query nodeResourceGroup -o tsv)
 DC1_NSG=$(az network nsg list --resource-group $DC1_MC_RG --query '[0].name' -o tsv)
 
 DC2_MC_RG=$(az aks show --resource-group $RG --name aks-apim-wus2 --query nodeResourceGroup -o tsv)
 DC2_NSG=$(az network nsg list --resource-group $DC2_MC_RG --query '[0].name' -o tsv)
 
-# DC1 — East US 2
+# DC1 — East US 1
 az network nsg rule create --resource-group $DC1_MC_RG --nsg-name $DC1_NSG --name AllowHTTPS --priority 100 --direction Inbound --access Allow --protocol TCP --destination-port-ranges 80 443 --source-address-prefixes Internet
 
 # DC2 — West US 2
@@ -194,7 +194,7 @@ DC2_VNET_ID=$(az network vnet show --resource-group $RG --name $DC2_VNET_NAME --
 
 # Create peering DC1 → DC2
 az network vnet peering create \
-  --name eus2-to-wus2 \
+  --name eus1-to-wus2 \
   --resource-group $RG \
   --vnet-name $DC1_VNET_NAME \
   --remote-vnet $DC2_VNET_ID \
@@ -202,7 +202,7 @@ az network vnet peering create \
 
 # Create peering DC2 → DC1
 az network vnet peering create \
-  --name wus2-to-eus2 \
+  --name wus2-to-eus1 \
   --resource-group $RG \
   --vnet-name $DC2_VNET_NAME \
   --remote-vnet $DC1_VNET_ID \
@@ -222,10 +222,10 @@ Already completed. See `dbscripts/POSTGRES_PGLOGICAL_GUIDE.md` for the full setu
 
 ---
 
-## Part 3: Deploy DC1 (East US 2)
+## Part 3: Deploy DC1 (East US 1)
 
 ```bash
-kubectl config use-context aks-apim-eus2
+kubectl config use-context aks-apim-eus1
 ```
 
 ### 3.1 Automated deployment
@@ -244,7 +244,7 @@ kubectl create namespace apim
 openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
     -keyout /tmp/apim-tls.key -out /tmp/apim-tls.crt \
     -subj "/CN=apim.example.com" \
-    -addext "subjectAltName=DNS:cp.eus2.apim.example.com,DNS:gw.eus2.apim.example.com"
+    -addext "subjectAltName=DNS:cp.eus1.apim.example.com,DNS:gw.eus1.apim.example.com"
 kubectl create secret tls apim-ingress-tls \
     --cert=/tmp/apim-tls.crt --key=/tmp/apim-tls.key -n apim
 rm -f /tmp/apim-tls.key /tmp/apim-tls.crt
@@ -332,7 +332,7 @@ kubectl wait --for=condition=ready pod -l deployment=wso2am-gw -n apim --timeout
 
 ## Part 4.5: Fix OAuth Callback URLs for DC2
 
-When DC1 starts first, it registers the Publisher and DevPortal as OAuth applications with callback URLs pointing to `cp.eus2.apim.example.com`. These registrations get replicated to DC2 via pglogical. DC2's Publisher/DevPortal will fail to login with **"Registered callback does not match with the provided url"** because the registered callbacks don't include the `wus2` hostname.
+When DC1 starts first, it registers the Publisher and DevPortal as OAuth applications with callback URLs pointing to `cp.eus1.apim.example.com`. These registrations get replicated to DC2 via pglogical. DC2's Publisher/DevPortal will fail to login with **"Registered callback does not match with the provided url"** because the registered callbacks don't include the `wus2` hostname.
 
 **Fix:** Update the OAuth callback URLs to include both DC hostnames.
 
@@ -341,12 +341,12 @@ When DC1 starts first, it registers the Publisher and DevPortal as OAuth applica
 3. Edit `apim_publisher` > **Inbound Authentication Configuration** > **OAuth/OpenID Connect Configuration** > **Edit**
 4. Update the **Callback Url** to:
    ```
-   regexp=(https://cp.eus2.apim.example.com/publisher/services/auth/callback/login|https://cp.eus2.apim.example.com/publisher/services/auth/callback/logout|https://cp.wus2.apim.example.com/publisher/services/auth/callback/login|https://cp.wus2.apim.example.com/publisher/services/auth/callback/logout)
+   regexp=(https://cp.eus1.apim.example.com/publisher/services/auth/callback/login|https://cp.eus1.apim.example.com/publisher/services/auth/callback/logout|https://cp.wus2.apim.example.com/publisher/services/auth/callback/login|https://cp.wus2.apim.example.com/publisher/services/auth/callback/logout)
    ```
 5. Click **Update**
 6. Edit `apim_devportal` and update its **Callback Url** to:
    ```
-   regexp=(https://cp.eus2.apim.example.com/devportal/services/auth/callback/login|https://cp.eus2.apim.example.com/devportal/services/auth/callback/logout|https://cp.wus2.apim.example.com/devportal/services/auth/callback/login|https://cp.wus2.apim.example.com/devportal/services/auth/callback/logout)
+   regexp=(https://cp.eus1.apim.example.com/devportal/services/auth/callback/login|https://cp.eus1.apim.example.com/devportal/services/auth/callback/logout|https://cp.wus2.apim.example.com/devportal/services/auth/callback/login|https://cp.wus2.apim.example.com/devportal/services/auth/callback/logout)
    ```
 7. Click **Update**
 
@@ -366,7 +366,7 @@ Each Control Plane needs to publish events (API deploy/undeploy, token revocatio
 
 Apply on **DC1** (expose CP for DC2 to reach):
 ```bash
-kubectl config use-context aks-apim-eus2
+kubectl config use-context aks-apim-eus1
 kubectl apply -n apim -f - <<'EOF'
 apiVersion: v1
 kind: Service
@@ -409,7 +409,7 @@ EOF
 Get the ILB IPs:
 ```bash
 # DC1 ILB IP (this IP will be used in DC2's event publishers)
-kubectl config use-context aks-apim-eus2
+kubectl config use-context aks-apim-eus1
 kubectl get svc wso2am-cp-ilb -n apim -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
 # Example: 10.224.0.100
 
@@ -426,7 +426,7 @@ Each CP needs 5 JMS event publisher XML files + 1 JNDI properties file pointing 
 Replace `<DC2_ILB_IP>` with the actual ILB IP from DC2, then apply on **DC1**:
 
 ```bash
-kubectl config use-context aks-apim-eus2
+kubectl config use-context aks-apim-eus1
 
 DC2_ILB_IP="<DC2_ILB_IP>"  # Replace with actual IP from step 5.1
 
@@ -513,7 +513,7 @@ Repeat the same on **DC2** (switch context, use `DC1_ILB_IP` instead).
 Upgrade the CP helm release to add the ConfigMap volumes. Add these to the `azure-values-dc1.yaml` (or pass via `--set`):
 
 ```bash
-kubectl config use-context aks-apim-eus2
+kubectl config use-context aks-apim-eus1
 
 helm upgrade cp ./distributed/control-plane -n apim \
     -f distributed/control-plane/azure-values-dc1.yaml \
@@ -540,7 +540,7 @@ Map the ingress external IPs to hostnames. You can use Azure DNS, any DNS provid
 
 ```bash
 # Get DC1 ingress IP
-kubectl config use-context aks-apim-eus2
+kubectl config use-context aks-apim-eus1
 DC1_IP=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 
 # Get DC2 ingress IP
@@ -548,7 +548,7 @@ kubectl config use-context aks-apim-wus2
 DC2_IP=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 
 echo "Add to DNS or /etc/hosts:"
-echo "$DC1_IP  cp.eus2.apim.example.com  gw.eus2.apim.example.com"
+echo "$DC1_IP  cp.eus1.apim.example.com  gw.eus1.apim.example.com"
 echo "$DC2_IP  cp.wus2.apim.example.com  gw.wus2.apim.example.com"
 ```
 
@@ -559,7 +559,7 @@ echo "$DC2_IP  cp.wus2.apim.example.com  gw.wus2.apim.example.com"
 ### 7.1 Check pods in both regions
 
 ```bash
-kubectl config use-context aks-apim-eus2 && kubectl get pods -n apim
+kubectl config use-context aks-apim-eus1 && kubectl get pods -n apim
 kubectl config use-context aks-apim-wus2 && kubectl get pods -n apim
 ```
 
@@ -567,9 +567,9 @@ kubectl config use-context aks-apim-wus2 && kubectl get pods -n apim
 
 **Via ingress (recommended):** Configure DNS or `/etc/hosts` as described in Part 6, then:
 
-1. Visit `https://cp.eus2.apim.example.com/carbon` — accept the self-signed certificate
-2. Visit `https://cp.eus2.apim.example.com/publisher` — login with `admin / admin`
-3. Visit `https://cp.eus2.apim.example.com/devportal`
+1. Visit `https://cp.eus1.apim.example.com/carbon` — accept the self-signed certificate
+2. Visit `https://cp.eus1.apim.example.com/publisher` — login with `admin / admin`
+3. Visit `https://cp.eus1.apim.example.com/devportal`
 
 > **Note:** The deploy scripts generate a self-signed TLS certificate with the correct SANs (matching the configured hostnames). Your browser will still show a certificate warning, but the cert will match the hostname. You must accept the cert at `/carbon` first — otherwise Publisher and DevPortal will show a "Network Error" fail-whale page because their internal API calls fail the TLS check.
 
@@ -577,7 +577,7 @@ kubectl config use-context aks-apim-wus2 && kubectl get pods -n apim
 
 ```bash
 # DC1
-kubectl config use-context aks-apim-eus2
+kubectl config use-context aks-apim-eus1
 sudo kubectl -n apim port-forward svc/wso2am-cp-service 443:9443
 
 # Visit https://localhost/publisher (admin / admin)
@@ -592,7 +592,7 @@ Create an API in DC1's Publisher. It should appear in DC2's Publisher within sec
 
 ```bash
 # Through DC1 gateway
-curl -k https://gw.eus2.apim.example.com/your-api/1.0.0/resource \
+curl -k https://gw.eus1.apim.example.com/your-api/1.0.0/resource \
   -H "Internal-Key: <token>"
 
 # Through DC2 gateway
@@ -606,14 +606,14 @@ curl -k https://gw.wus2.apim.example.com/your-api/1.0.0/resource \
 
 Per cluster:
 ```bash
-kubectl config use-context aks-apim-eus2  # or aks-apim-wus2
+kubectl config use-context aks-apim-eus1  # or aks-apim-wus2
 ./scripts/undeploy-azure.sh
 ```
 
 Delete AKS clusters:
 ```bash
 RG="rg-WSO2-APIM-4.7.0-release-isuruguna"
-az aks delete --resource-group $RG --name aks-apim-eus2 --yes
+az aks delete --resource-group $RG --name aks-apim-eus1 --yes
 az aks delete --resource-group $RG --name aks-apim-wus2 --yes
 ```
 
@@ -640,11 +640,11 @@ az aks delete --resource-group $RG --name aks-apim-wus2 --yes
 
 | File | Purpose |
 |------|---------|
-| `distributed/control-plane/azure-values-dc1.yaml` | CP values for East US 2 |
+| `distributed/control-plane/azure-values-dc1.yaml` | CP values for East US 1 |
 | `distributed/control-plane/azure-values-dc2.yaml` | CP values for West US 2 |
-| `distributed/traffic-manager/azure-values-dc1.yaml` | TM values for East US 2 |
+| `distributed/traffic-manager/azure-values-dc1.yaml` | TM values for East US 1 |
 | `distributed/traffic-manager/azure-values-dc2.yaml` | TM values for West US 2 |
-| `distributed/gateway/azure-values-dc1.yaml` | GW values for East US 2 |
+| `distributed/gateway/azure-values-dc1.yaml` | GW values for East US 1 |
 | `distributed/gateway/azure-values-dc2.yaml` | GW values for West US 2 |
 | `scripts/deploy-azure-dc1.sh` | Automated DC1 deployment (NGINX + APIM + ILB) |
 | `scripts/deploy-azure-dc2.sh` | Automated DC2 deployment (NGINX + APIM + ILB) |

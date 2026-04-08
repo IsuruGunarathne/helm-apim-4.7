@@ -4,7 +4,7 @@ Technical summary of work done to run WSO2 APIM 4.7 product-apim integration tes
 
 ## Goal
 
-Run `product-apim/all-in-one-apim/modules/integration/tests-integration/tests-backend` integration tests against APIM 4.7 deployed on AKS across two data centers (DC1: `aks-apim-eus2`, DC2: `aks-apim-wus2`). The test framework was designed for a local all-in-one server — we adapted it for a remote distributed deployment.
+Run `product-apim/all-in-one-apim/modules/integration/tests-integration/tests-backend` integration tests against APIM 4.7 deployed on AKS across two data centers (DC1: `aks-apim-eus1`, DC2: `aks-apim-wus2`). The test framework was designed for a local all-in-one server — we adapted it for a remote distributed deployment.
 
 ## Three Core Problems Solved
 
@@ -129,7 +129,7 @@ Tests run: 91, Failures: 9, Errors: 0, Skipped: 81
 
 3. **Test more test groups** — Only `apim-integration-tests-api-common` has been tested. Other groups (`api-product`, `api-governance`, `api-lifecycle`) need to be run.
 
-4. **DC2 testing** — Currently only tested against DC1 (`aks-apim-eus2`). Need to update XSL/automation.xml hostnames for DC2 (`aks-apim-wus2`) and verify.
+4. **DC2 testing** — Currently only tested against DC1 (`aks-apim-eus1`). Need to update XSL/automation.xml hostnames for DC2 (`aks-apim-wus2`) and verify.
 
 5. **Port-forward auto-reconnect** — `kubectl port-forward` drops during long runs. Consider a wrapper script or tool like `kubefwd`.
 
@@ -145,8 +145,8 @@ cd integration-testing
 ./apply-overrides.sh
 
 # 3. Start port-forwards
-kubectl port-forward svc/wso2am-cp-service 9763:9763 -n apim --context aks-apim-eus2 &
-kubectl port-forward svc/wso2am-cp-service 19443:9443 -n apim --context aks-apim-eus2 &
+kubectl port-forward svc/wso2am-cp-service 9763:9763 -n apim --context aks-apim-eus1 &
+kubectl port-forward svc/wso2am-cp-service 19443:9443 -n apim --context aks-apim-eus1 &
 
 # 4. Run tests
 cd ../product-apim/all-in-one-apim

@@ -5,9 +5,9 @@ Set up pglogical bi-directional replication between two Azure PostgreSQL Flexibl
 ## Architecture
 
 ```
-        DC1 (East US 2)                           DC2 (West US 2)
+        DC1 (East US 1)                           DC2 (West US 2)
 ┌──────────────────────────┐            ┌──────────────────────────┐
-│  apim-4-7-eus2.postgres  │            │  apim-4-7-wus2.postgres  │
+│  apim-4-7-eus1.postgres  │            │  apim-4-7-wus2.postgres  │
 │  .database.azure.com     │            │  .database.azure.com     │
 │                          │            │                          │
 │  ┌─────────┐ ┌─────────┐│  pglogical ││┌─────────┐ ┌─────────┐ │
@@ -23,15 +23,15 @@ Set up pglogical bi-directional replication between two Azure PostgreSQL Flexibl
 ## Connection Details
 
 ```bash
-# DC1 — East US 2
-export DC1_HOST=apim-4-7-eus2.postgres.database.azure.com
+# DC1 — East US 1
+export DC1_HOST=apim-4-7-eus1.postgres.database.azure.com
 export DC1_USER=apimadmineast
 export DC1_PORT=5432
 export DC1_PASS="{your-password}"
 
 or
 
-export PGHOST=apim-4-7-eus2.postgres.database.azure.com
+export PGHOST=apim-4-7-eus1.postgres.database.azure.com
 export PGUSER=apimadmineast
 export PGPORT=5432
 export PGDATABASE=postgres
@@ -71,13 +71,13 @@ Configure these on **both** Flexible Server instances via the Azure Portal (Serv
 Using Azure CLI:
 ```bash
 # DC1
-az postgres flexible-server parameter set --resource-group rg-WSO2-APIM-4.7.0-release-isuruguna --server-name apim-4-7-eus2 --name wal_level --value logical
-az postgres flexible-server parameter set --resource-group rg-WSO2-APIM-4.7.0-release-isuruguna --server-name apim-4-7-eus2 --name max_worker_processes --value 16
-az postgres flexible-server parameter set --resource-group rg-WSO2-APIM-4.7.0-release-isuruguna --server-name apim-4-7-eus2 --name max_replication_slots --value 10
-az postgres flexible-server parameter set --resource-group rg-WSO2-APIM-4.7.0-release-isuruguna --server-name apim-4-7-eus2 --name max_wal_senders --value 10
-az postgres flexible-server parameter set --resource-group rg-WSO2-APIM-4.7.0-release-isuruguna --server-name apim-4-7-eus2 --name track_commit_timestamp --value on
-az postgres flexible-server parameter set --resource-group rg-WSO2-APIM-4.7.0-release-isuruguna --server-name apim-4-7-eus2 --name shared_preload_libraries --value pglogical
-az postgres flexible-server parameter set --resource-group rg-WSO2-APIM-4.7.0-release-isuruguna --server-name apim-4-7-eus2 --name azure.extensions --value pglogical
+az postgres flexible-server parameter set --resource-group rg-WSO2-APIM-4.7.0-release-isuruguna --server-name apim-4-7-eus1 --name wal_level --value logical
+az postgres flexible-server parameter set --resource-group rg-WSO2-APIM-4.7.0-release-isuruguna --server-name apim-4-7-eus1 --name max_worker_processes --value 16
+az postgres flexible-server parameter set --resource-group rg-WSO2-APIM-4.7.0-release-isuruguna --server-name apim-4-7-eus1 --name max_replication_slots --value 10
+az postgres flexible-server parameter set --resource-group rg-WSO2-APIM-4.7.0-release-isuruguna --server-name apim-4-7-eus1 --name max_wal_senders --value 10
+az postgres flexible-server parameter set --resource-group rg-WSO2-APIM-4.7.0-release-isuruguna --server-name apim-4-7-eus1 --name track_commit_timestamp --value on
+az postgres flexible-server parameter set --resource-group rg-WSO2-APIM-4.7.0-release-isuruguna --server-name apim-4-7-eus1 --name shared_preload_libraries --value pglogical
+az postgres flexible-server parameter set --resource-group rg-WSO2-APIM-4.7.0-release-isuruguna --server-name apim-4-7-eus1 --name azure.extensions --value pglogical
 
 # DC2
 az postgres flexible-server parameter set --resource-group rg-WSO2-APIM-4.7.0-release-isuruguna --server-name apim-4-7-wus2 --name wal_level --value logical
@@ -178,7 +178,7 @@ Each database on each server needs a pglogical node. A node represents this data
 \c apim_db
 SELECT pglogical.create_node(
     node_name := 'dc1-apim',
-    dsn := 'host=apim-4-7-eus2.postgres.database.azure.com port=5432 dbname=apim_db user=apimadmineast password={your-password}'
+    dsn := 'host=apim-4-7-eus1.postgres.database.azure.com port=5432 dbname=apim_db user=apimadmineast password={your-password}'
 );
 ```
 
@@ -188,7 +188,7 @@ SELECT pglogical.create_node(
 \c shared_db
 SELECT pglogical.create_node(
     node_name := 'dc1-shared',
-    dsn := 'host=apim-4-7-eus2.postgres.database.azure.com port=5432 dbname=shared_db user=apimadmineast password={your-password}'
+    dsn := 'host=apim-4-7-eus1.postgres.database.azure.com port=5432 dbname=shared_db user=apimadmineast password={your-password}'
 );
 ```
 
@@ -236,7 +236,7 @@ This adds all tables in the `public` schema to the default replication set. All 
 SELECT pglogical.create_subscription(
     subscription_name := 'dc2_sub_apim',
     replication_sets := ARRAY['default'],
-    provider_dsn := 'host=apim-4-7-eus2.postgres.database.azure.com port=5432 dbname=apim_db user=apimadmineast password={your-password}',
+    provider_dsn := 'host=apim-4-7-eus1.postgres.database.azure.com port=5432 dbname=apim_db user=apimadmineast password={your-password}',
     synchronize_data := false,
     forward_origins := '{}'
 );
@@ -248,7 +248,7 @@ SELECT pglogical.create_subscription(
 SELECT pglogical.create_subscription(
     subscription_name := 'dc2_sub_shared',
     replication_sets := ARRAY['default'],
-    provider_dsn := 'host=apim-4-7-eus2.postgres.database.azure.com port=5432 dbname=shared_db user=apimadmineast password={your-password}',
+    provider_dsn := 'host=apim-4-7-eus1.postgres.database.azure.com port=5432 dbname=shared_db user=apimadmineast password={your-password}',
     synchronize_data := false,
     forward_origins := '{}'
 );
@@ -351,7 +351,7 @@ DELETE FROM AM_ALERT_TYPES WHERE ALERT_TYPE_ID IN (998, 999);
 
 ## Networking Checklist
 
-- [ ] VNet peering configured between East US 2 and West US 2 VNets
+- [ ] VNet peering configured between East US 1 and West US 2 VNets
 - [ ] PostgreSQL port 5432 open in NSG/firewall rules for both directions
 - [ ] Use private IP addresses in DSN strings if VNet peering is active (better security and latency)
 - [ ] Both servers can reach each other (test with `psql` from one region to the other)
@@ -388,14 +388,14 @@ SELECT pglogical.drop_subscription('dc2-sub-apim');
 ### Check PostgreSQL logs
 Azure Portal → Your server → Monitoring → Logs, or:
 ```bash
-az postgres flexible-server log list --resource-group <rg> --server-name apim-4-7-eus2
+az postgres flexible-server log list --resource-group <rg> --server-name apim-4-7-eus1
 ```
 
 ---
 
 ## Summary of Operations
 
-| Step | DC1 (East US 2) | DC2 (West US 2) |
+| Step | DC1 (East US 1) | DC2 (West US 2) |
 |------|-----------------|-----------------|
 | Server params | Configure & restart | Configure & restart |
 | Grant privileges | `apimadmineast` | `apimadminwest` |

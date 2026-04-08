@@ -2,11 +2,11 @@
 set -e
 
 NAMESPACE="apim"
-CONTEXT="aks-apim-eus2"
+CONTEXT="aks-apim-eus1"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-echo "=== WSO2 APIM 4.7 — Azure DC1 (East US 2) Deployment [MSSQL] ==="
+echo "=== WSO2 APIM 4.7 — Azure DC1 (East US 1) Deployment [MSSQL] ==="
 echo "Namespace: $NAMESPACE"
 echo "Context:   $CONTEXT"
 echo ""
@@ -68,7 +68,7 @@ else
     openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
         -keyout /tmp/apim-tls.key -out /tmp/apim-tls.crt \
         -subj "/CN=apim.example.com" \
-        -addext "subjectAltName=DNS:cp.eus2.apim.example.com,DNS:gw.eus2.apim.example.com" 2>/dev/null
+        -addext "subjectAltName=DNS:cp.eus1.apim.example.com,DNS:gw.eus1.apim.example.com" 2>/dev/null
     kubectl create secret tls apim-ingress-tls \
         --cert=/tmp/apim-tls.crt --key=/tmp/apim-tls.key \
         -n "$NAMESPACE"
@@ -176,14 +176,14 @@ echo "  Ingress external IP: ${INGRESS_IP:-<pending>}"
 echo "  CP ILB internal IP:  ${ILB_IP:-<pending>}"
 echo ""
 echo "DNS / /etc/hosts (add these):"
-echo "  ${INGRESS_IP:-<INGRESS_IP>}  cp.eus2.apim.example.com  gw.eus2.apim.example.com"
+echo "  ${INGRESS_IP:-<INGRESS_IP>}  cp.eus1.apim.example.com  gw.eus1.apim.example.com"
 echo ""
 echo "Endpoints (once DNS is configured):"
-echo "  Carbon:     https://cp.eus2.apim.example.com/carbon  (accept cert first!)"
-echo "  Publisher:  https://cp.eus2.apim.example.com/publisher"
-echo "  DevPortal:  https://cp.eus2.apim.example.com/devportal"
-echo "  Admin:      https://cp.eus2.apim.example.com/admin"
-echo "  Gateway:    https://gw.eus2.apim.example.com"
+echo "  Carbon:     https://cp.eus1.apim.example.com/carbon  (accept cert first!)"
+echo "  Publisher:  https://cp.eus1.apim.example.com/publisher"
+echo "  DevPortal:  https://cp.eus1.apim.example.com/devportal"
+echo "  Admin:      https://cp.eus1.apim.example.com/admin"
+echo "  Gateway:    https://gw.eus1.apim.example.com"
 echo "  Credentials: admin / admin"
 echo ""
 echo "Next step: Deploy DC2, then run ./scripts/setup-cross-dc-mssql.sh"

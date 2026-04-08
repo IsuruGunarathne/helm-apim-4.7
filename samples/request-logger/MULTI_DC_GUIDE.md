@@ -22,7 +22,7 @@ This installs the request-logger Helm chart in both DC1 and DC2.
 Verify:
 ```bash
 # DC1
-kubectl config use-context aks-apim-eus2
+kubectl config use-context aks-apim-eus1
 kubectl get pods -n apim -l app.kubernetes.io/name=request-logger
 
 # DC2
@@ -32,7 +32,7 @@ kubectl get pods -n apim -l app.kubernetes.io/name=request-logger
 
 ## 2. Create the API in Publisher
 
-1. Open Publisher: `https://cp.eus2.apim.example.com/publisher` (admin / admin)
+1. Open Publisher: `https://cp.eus1.apim.example.com/publisher` (admin / admin)
 2. Click **Create API** > **Import Open API** > **OpenAPI File**
 3. Upload `samples/request-logger/src/openapi.yaml`
 4. Set:
@@ -49,7 +49,7 @@ The API will be replicated to DC2 automatically via database replication.
 
 ## 3. Subscribe and get a token
 
-1. Open DevPortal: `https://cp.eus2.apim.example.com/devportal`
+1. Open DevPortal: `https://cp.eus1.apim.example.com/devportal`
 2. Find the **Books** API > **Subscribe** (create a new application if needed)
 3. Go to the application > **Production Keys** > **Generate Keys**
 4. Copy the access token
@@ -62,21 +62,21 @@ Or use an Internal Key (simpler for testing):
 
 Replace `<TOKEN>` with your access token or Internal Key.
 
-### DC1 Gateway (East US 2)
+### DC1 Gateway (East US 1)
 
 ```bash
 # List books (empty initially)
-curl -sk https://gw.eus2.apim.example.com/books/1.0.0/books \
+curl -sk https://gw.eus1.apim.example.com/books/1.0.0/books \
   -H "Internal-Key: <TOKEN>"
 
 # Create a book
-curl -sk -X POST https://gw.eus2.apim.example.com/books/1.0.0/books \
+curl -sk -X POST https://gw.eus1.apim.example.com/books/1.0.0/books \
   -H "Internal-Key: <TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{"title": "The Great Gatsby", "author": "F. Scott Fitzgerald", "year": 1925}'
 
 # List books (should show the book just created)
-curl -sk https://gw.eus2.apim.example.com/books/1.0.0/books \
+curl -sk https://gw.eus1.apim.example.com/books/1.0.0/books \
   -H "Internal-Key: <TOKEN>"
 ```
 
@@ -119,7 +119,7 @@ curl -sk -X DELETE https://gw.wus2.apim.example.com/books/1.0.0/books/1 \
 
 ```bash
 # DC1
-kubectl config use-context aks-apim-eus2
+kubectl config use-context aks-apim-eus1
 helm uninstall request-logger -n apim
 
 # DC2
