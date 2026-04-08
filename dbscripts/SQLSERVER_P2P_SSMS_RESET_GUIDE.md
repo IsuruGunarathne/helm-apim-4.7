@@ -120,7 +120,7 @@ Follow [SQLSERVER_P2P_SSMS_GUIDE.md](SQLSERVER_P2P_SSMS_GUIDE.md) from **Step 2*
 | Step | Action |
 |------|--------|
 | **Step 2** | Create replication logins (`repl_dc2` on DC1, `repl_dc1` on DC2) — if they were lost with the drop |
-| **Step 3** | Configure Distribution (recreates the `distribution` database) |
+| **Step 3** | Configure Distribution (recreates the `distribution` database) + set `max text repl size` to `-1` |
 | **Step 4** | Create `apim_db` and `shared_db` on both DCs |
 | **Step 5** | Run DC-specific table scripts (`dc1/SQLServer/mssql/` and `dc2/SQLServer/mssql/`) |
 | **Step 5a** | Create replication database users (`repl_dc2` on DC1, `repl_dc1` on DC2) |

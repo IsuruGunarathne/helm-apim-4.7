@@ -104,6 +104,17 @@ On **each** server: right-click **Replication** > **Configure Distribution...**
 
 > After this, you'll see **Local Publications** and **Local Subscriptions** under each server's Replication folder.
 
+### Set max text repl size
+
+On **each** DC, open a **New Query** on **master** and run:
+
+```sql
+EXEC sp_configure 'max text repl size', -1;
+RECONFIGURE;
+```
+
+> This removes the 64KB default limit on LOB data replicated via P2P. Without this, APIM's LLM Provider registration (which inserts ~145KB of data) will fail at startup.
+
 ---
 
 ## Step 4: Create Databases

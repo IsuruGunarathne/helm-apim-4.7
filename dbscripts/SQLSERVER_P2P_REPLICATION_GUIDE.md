@@ -160,6 +160,20 @@ sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d master -C \
   -i dbscripts/p2p-mssql/step2_dc2_distribution.sql
 ```
 
+### Set max text repl size
+
+Run on **both** DCs to remove the 64KB LOB replication limit (APIM's LLM Provider data is ~145KB):
+
+```bash
+# DC1
+sqlcmd -S $DC1_HOST,$DC1_PORT -U $DC1_USER -P $DC1_PASS -d master -C \
+  -Q "EXEC sp_configure 'max text repl size', -1; RECONFIGURE;"
+
+# DC2
+sqlcmd -S $DC2_HOST,$DC2_PORT -U $DC2_USER -P $DC2_PASS -d master -C \
+  -Q "EXEC sp_configure 'max text repl size', -1; RECONFIGURE;"
+```
+
 ---
 
 ## Step 3: Create Databases
