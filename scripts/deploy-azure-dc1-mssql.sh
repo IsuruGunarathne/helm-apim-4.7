@@ -68,7 +68,7 @@ else
     openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
         -keyout /tmp/apim-tls.key -out /tmp/apim-tls.crt \
         -subj "/CN=apim.example.com" \
-        -addext "subjectAltName=DNS:cp.eus1.apim.example.com,DNS:gw.eus1.apim.example.com" 2>/dev/null
+        -addext "subjectAltName=DNS:cp.eus1.apim.example.com,DNS:gw.eus1.apim.example.com,DNS:ug.eus1.apim.example.com" 2>/dev/null
     kubectl create secret tls apim-ingress-tls \
         --cert=/tmp/apim-tls.crt --key=/tmp/apim-tls.key \
         -n "$NAMESPACE"
@@ -176,7 +176,7 @@ echo "  Ingress external IP: ${INGRESS_IP:-<pending>}"
 echo "  CP ILB internal IP:  ${ILB_IP:-<pending>}"
 echo ""
 echo "DNS / /etc/hosts (add these):"
-echo "  ${INGRESS_IP:-<INGRESS_IP>}  cp.eus1.apim.example.com  gw.eus1.apim.example.com"
+echo "  ${INGRESS_IP:-<INGRESS_IP>}  cp.eus1.apim.example.com  gw.eus1.apim.example.com  ug.eus1.apim.example.com"
 echo ""
 echo "Endpoints (once DNS is configured):"
 echo "  Carbon:     https://cp.eus1.apim.example.com/carbon  (accept cert first!)"

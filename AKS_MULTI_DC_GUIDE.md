@@ -553,9 +553,94 @@ kubectl config use-context aks-apim-wus2
 DC2_IP=$(kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 
 echo "Add to DNS or /etc/hosts:"
-echo "$DC1_IP  cp.eus1.apim.example.com  gw.eus1.apim.example.com"
-echo "$DC2_IP  cp.wus2.apim.example.com  gw.wus2.apim.example.com"
+echo "$DC1_IP  cp.eus1.apim.example.com  gw.eus1.apim.example.com  ug.eus1.apim.example.com"
+echo "$DC2_IP  cp.wus2.apim.example.com  gw.wus2.apim.example.com  ug.wus2.apim.example.com"
 ```
+
+---
+
+## Part 6.5: Deploy API Platform Gateway (Universal Gateway)
+
+The API Platform Gateway is a lightweight, Envoy-based gateway that runs alongside the existing Classic (Synapse) gateway. It consists of two components:
+- **Gateway Controller**: Manages API configurations, connects to the APIM Control Plane via a registration token
+- **Gateway Runtime**: Envoy proxy + Policy Engine for API traffic routing
+
+### Prerequisites
+
+- Both DCs fully deployed (Parts 1–6)
+- DNS configured for `ug.eus1.apim.example.com` and `ug.wus2.apim.example.com` (included in Part 6)
+- Admin Portal accessible
+
+### 6.5.1 Register Universal Gateways in Admin Portal
+
+Register **one gateway per DC**. Each gets its own URL and registration token.
+
+**DC1 Gateway:**
+1. Go to `https://cp.eus1.apim.example.com/admin` (admin / admin)
+2. Navigate to **Gateways** > **Universal Gateways**
+3. Click **Add Gateway**, select type **Universal Gateway**
+4. Configure:
+   - **Display Name**: `Universal Gateway - DC1 (East US)`
+   - **URL**: `https://ug.eus1.apim.example.com`
+   - **Visibility**: Public
+5. Click **Add** and copy the **registration token**
+
+**DC2 Gateway:**
+1. Same Admin Portal (registration replicates via DB)
+2. Add another gateway:
+   - **Display Name**: `Universal Gateway - DC2 (West US)`
+   - **URL**: `https://ug.wus2.apim.example.com`
+   - **Visibility**: Public
+3. Click **Add** and copy the **registration token**
+
+### 6.5.2 Deploy Platform Gateway to DC1
+
+```bash
+# Option A: Pass token interactively (script will prompt)
+./scripts/deploy-platform-gw-dc1.sh
+
+# Option B: Pass token via environment variable
+PLATFORM_GW_TOKEN="<DC1_TOKEN>" ./scripts/deploy-platform-gw-dc1.sh
+```
+
+### 6.5.3 Deploy Platform Gateway to DC2
+
+```bash
+PLATFORM_GW_TOKEN="<DC2_TOKEN>" ./scripts/deploy-platform-gw-dc2.sh
+```
+
+### 6.5.4 Verify Connectivity
+
+Check that the gateway pods are running in both DCs:
+```bash
+kubectl config use-context aks-apim-eus1 && kubectl get pods -n apim -l deployment=wso2am-platform-gw
+kubectl config use-context aks-apim-wus2 && kubectl get pods -n apim -l deployment=wso2am-platform-gw
+```
+
+In the Admin Portal, the registered gateways should show as **connected/active**.
+
+### 6.5.5 Test API Deployment to Universal Gateway
+
+1. In Publisher, create a REST API and select **Universal** as the gateway type
+2. Add resources, save, and **Publish**
+3. Deploy to the registered Universal Gateway environment(s)
+4. Invoke through the platform gateway:
+
+```bash
+# Through DC1 Universal Gateway
+curl -k https://ug.eus1.apim.example.com/<context>/<version>/<resource>
+
+# Through DC2 Universal Gateway
+curl -k https://ug.wus2.apim.example.com/<context>/<version>/<resource>
+```
+
+### 6.5.6 Teardown (Optional)
+
+```bash
+./scripts/undeploy-platform-gw.sh
+```
+
+> **Note:** This removes the gateway pods but the registrations remain in the Admin Portal. Remove them manually if no longer needed.
 
 ---
 

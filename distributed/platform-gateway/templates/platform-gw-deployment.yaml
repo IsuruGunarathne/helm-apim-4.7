@@ -1,0 +1,143 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "platform-gw.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "platform-gw.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "platform-gw.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/platform-gw-configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/platform-gw-secret.yaml") . | sha256sum }}
+      labels:
+        {{- include "platform-gw.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+        # --- Gateway Controller ---
+        - name: gateway-controller
+          image: "{{ .Values.controller.image.repository }}:{{ .Values.controller.image.tag }}"
+          imagePullPolicy: {{ .Values.controller.image.pullPolicy }}
+          command: ["-config", "/etc/gateway-controller/config.toml"]
+          ports:
+            - name: rest-api
+              containerPort: 9090
+              protocol: TCP
+            - name: admin
+              containerPort: 9092
+              protocol: TCP
+            - name: xds-grpc
+              containerPort: 18000
+              protocol: TCP
+            - name: policy-xds
+              containerPort: 18001
+              protocol: TCP
+            - name: ctrl-metrics
+              containerPort: 9091
+              protocol: TCP
+          env:
+            - name: APIP_GW_CONTROLLER_STORAGE_TYPE
+              value: {{ .Values.controller.storageType | quote }}
+            - name: APIP_GW_CONTROLLER_STORAGE_SQLITE_PATH
+              value: {{ .Values.controller.storagePath | quote }}
+            - name: APIP_GW_CONTROLLER_LOGGING_LEVEL
+              value: {{ .Values.controller.logLevel | quote }}
+            - name: APIP_GW_CONTROLLER_METRICS_PORT
+              value: "9091"
+            - name: APIP_GW_DEVELOPMENT_MODE
+              value: {{ .Values.controller.developmentMode | quote }}
+            - name: APIP_GW_CONTROLPLANE_HOST
+              value: "{{ .Values.gateway.controlplaneHost }}:{{ .Values.gateway.controlplanePort }}"
+            - name: APIP_GW_GATEWAY_REGISTRATION_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "platform-gw.fullname" . }}-secret
+                  key: APIP_GW_GATEWAY_REGISTRATION_TOKEN
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/gateway-controller/config.toml
+              subPath: config.toml
+              readOnly: true
+            - name: controller-data
+              mountPath: /app/data
+          resources:
+            {{- toYaml .Values.controller.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 9092
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9092
+            initialDelaySeconds: 15
+            periodSeconds: 30
+
+        # --- Gateway Runtime (Envoy + Policy Engine) ---
+        - name: gateway-runtime
+          image: "{{ .Values.runtime.image.repository }}:{{ .Values.runtime.image.tag }}"
+          imagePullPolicy: {{ .Values.runtime.image.pullPolicy }}
+          command: ["--pol.config", "/etc/policy-engine/config.toml"]
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: https
+              containerPort: 8443
+              protocol: TCP
+            - name: envoy-admin
+              containerPort: 9901
+              protocol: TCP
+            - name: pe-admin
+              containerPort: 9002
+              protocol: TCP
+            - name: rt-metrics
+              containerPort: 9003
+              protocol: TCP
+          env:
+            - name: GATEWAY_CONTROLLER_HOST
+              value: "localhost"
+            - name: LOG_LEVEL
+              value: {{ .Values.runtime.logLevel | quote }}
+            - name: MOESIF_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "platform-gw.fullname" . }}-secret
+                  key: MOESIF_KEY
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/policy-engine/config.toml
+              subPath: config.toml
+              readOnly: true
+            - name: config-volume
+              mountPath: /etc/policy-engine/llm-pricing/model_prices.json
+              subPath: model_prices.json
+              readOnly: true
+          resources:
+            {{- toYaml .Values.runtime.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 9901
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: 9901
+            initialDelaySeconds: 15
+            periodSeconds: 30
+
+      volumes:
+        - name: config-volume
+          configMap:
+            name: {{ include "platform-gw.fullname" . }}-conf
+        - name: controller-data
+          emptyDir: {}

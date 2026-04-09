@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "platform-gw.fullname" . }}-conf
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "platform-gw.labels" . | nindent 4 }}
+data:
+  config.toml: |-
+    {{- tpl (.Files.Get "confs/config.toml") . | nindent 4 }}
+  model_prices.json: |-
+    {{- .Files.Get "confs/llm-pricing/model_prices.json" | nindent 4 }}

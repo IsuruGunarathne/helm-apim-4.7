@@ -1,0 +1,59 @@
+nameOverride: ""
+fullnameOverride: ""
+
+replicaCount: 1
+
+controller:
+  image:
+    repository: ghcr.io/wso2/api-platform/gateway-controller
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "250m"
+  # Storage type: sqlite or memory
+  storageType: "sqlite"
+  storagePath: "./data/gateway.db"
+  logLevel: "info"
+  developmentMode: true
+
+runtime:
+  image:
+    repository: ghcr.io/wso2/api-platform/gateway-runtime
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "200m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+  logLevel: "info"
+
+gateway:
+  # APIM Control Plane connection (K8s service name)
+  controlplaneHost: "wso2am-cp-service"
+  controlplanePort: 9443
+  # Registration token from Admin Portal (set via --set or values override)
+  registrationToken: ""
+  # Moesif analytics
+  moesifKey: ""
+  # Gateway ID (unique per gateway instance)
+  gatewayId: "platform-gateway-id"
+
+kubernetes:
+  ingress:
+    enabled: true
+    hostname: ""
+    tlsSecret: "apim-ingress-tls"
+    annotations:
+      kubernetes.io/ingress.class: nginx
+      nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+      nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "180"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "180"

@@ -1,0 +1,22 @@
+fullnameOverride: "wso2am-platform-gw"
+
+replicaCount: 1
+
+gateway:
+  controlplaneHost: "wso2am-cp-service"
+  controlplanePort: 9443
+  registrationToken: "<DC2_REGISTRATION_TOKEN>"
+  moesifKey: "eyJhcHAiOiI0OTM6Mzg4NyIsInZlciI6IjIuMSIsIm9yZyI6IjExNjo3MDQiLCJpYXQiOjE3Njk5MDQwMDB9.oC1oI3N_DB7DQjbwwLQf3LXHPfeNYHGLvo3YDv4AVcI"
+  gatewayId: "platform-gw-dc2"
+
+kubernetes:
+  ingress:
+    enabled: true
+    hostname: "ug.wus2.apim.example.com"
+    tlsSecret: "apim-ingress-tls"
+    annotations:
+      kubernetes.io/ingress.class: nginx
+      nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+      nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "180"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "180"

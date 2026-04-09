@@ -1,0 +1,5 @@
+apiVersion: v2
+name: wso2am-platform-gw
+description: WSO2 API Platform Gateway for WSO2 API Manager 4.7
+version: 1.0.0
+appVersion: "1.0.0"

@@ -1,0 +1,29 @@
+{{- if .Values.kubernetes.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "platform-gw.fullname" . }}-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "platform-gw.labels" . | nindent 4 }}
+  {{- with .Values.kubernetes.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  tls:
+    - hosts:
+        - {{ .Values.kubernetes.ingress.hostname | quote }}
+      secretName: {{ .Values.kubernetes.ingress.tlsSecret }}
+  rules:
+    - host: {{ .Values.kubernetes.ingress.hostname | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "platform-gw.fullname" . }}-service
+                port:
+                  number: 8443
+{{- end }}
