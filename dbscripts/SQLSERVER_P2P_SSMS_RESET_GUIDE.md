@@ -124,10 +124,11 @@ Follow [SQLSERVER_P2P_SSMS_GUIDE.md](SQLSERVER_P2P_SSMS_GUIDE.md) from **Step 2*
 | **Step 4** | Create `apim_db` and `shared_db` on both DCs |
 | **Step 5** | Run DC-specific table scripts (`dc1/SQLServer/mssql/` and `dc2/SQLServer/mssql/`) |
 | **Step 5a** | Create replication database users (`repl_dc2` on DC1, `repl_dc1` on DC2) |
-| **Step 6** | Create publications on DC1 + enable P2P settings |
-| **Step 7** | P2P Topology Wizard (creates DC2 pub + both subscriptions) |
-| **Step 8** | Verify agents are running and status is healthy |
-| **Step 9** | Test bidirectional replication |
+| **Step 6** | Create publications on DC1 (SSMS New Publication Wizard + P2P settings) |
+| **Step 7** | P2P Topology Wizard — adds DC2 peer, creates subscriptions both ways |
+| **Step 7+** | Set `p2p_continue_onconflict` on DC2 via `sp_changepublication` |
+| **Step 9** | Verify agents are running and status is healthy |
+| **Step 10** | Test bidirectional replication |
 
 > **Note:** Step 1 (connecting to servers) can be skipped — you're already connected. Step 2 (logins) may also be skipped if the replication logins still exist (they're server-level and may survive the distributor drop). Check **Security > Logins** in Object Explorer.
 

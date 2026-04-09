@@ -108,6 +108,18 @@ On **each** server: right-click **Replication** > **Configure Distribution...**
 
 > After this, you'll see **Local Publications** and **Local Subscriptions** under each server's Replication folder.
 
+### Create distribution database master key
+
+On **each** DC, open a **New Query** on the **distribution** database and run:
+
+```sql
+USE distribution;
+CREATE MASTER KEY ENCRYPTION BY PASSWORD = 'Repl@MasterKey2025!';
+GO
+```
+
+> The distribution database needs a master key to store encrypted subscriber credentials. Without it, push subscription agent jobs will fail.
+
 ### Set max text repl size
 
 On **each** DC, open a **New Query** on **master** and run:
@@ -142,14 +154,14 @@ GO
 
 **On DC1** (from jump VM):
 ```powershell
-sqlcmd -S apim-4-7-eus1-s -U apimadmineast -P "distributed@2" -d shared_db -i "dbscripts\dc1\SQLServer\mssql\tables.sql"
-sqlcmd -S apim-4-7-eus1-s -U apimadmineast -P "distributed@2" -d apim_db -i "dbscripts\dc1\SQLServer\mssql\apimgt\tables.sql"
+sqlcmd -S apim-4-7-eus1-s -U apimadmineast -P "distributed@2" -d shared_db -C -i dbscripts/dc1/SQLServer/mssql/tables.sql
+sqlcmd -S apim-4-7-eus1-s -U apimadmineast -P "distributed@2" -d apim_db -C -i dbscripts/dc1/SQLServer/mssql/apimgt/tables.sql
 ```
 
 **On DC2** (from jump VM):
 ```powershell
-sqlcmd -S apim-4-7-wus2-s -U apimadminwest -P "distributed@2" -d shared_db -i "dbscripts\dc2\SQLServer\mssql\tables.sql"
-sqlcmd -S apim-4-7-wus2-s -U apimadminwest -P "distributed@2" -d apim_db -i "dbscripts\dc2\SQLServer\mssql\apimgt\tables.sql"
+sqlcmd -S apim-4-7-wus2-s -U apimadminwest -P "distributed@2" -d shared_db -C -i dbscripts/dc2/SQLServer/mssql/tables.sql
+sqlcmd -S apim-4-7-wus2-s -U apimadminwest -P "distributed@2" -d apim_db -C -i dbscripts/dc2/SQLServer/mssql/apimgt/tables.sql
 ```
 
 > DC1 uses `IDENTITY(1,2)` (odd), DC2 uses `IDENTITY(2,2)` (even). Don't mix them up.
@@ -177,7 +189,6 @@ GO
 ## Step 6: Create Publications (on DC1 only)
 
 > **Reference video:** https://www.youtube.com/watch?v=lqYyYaJp9Wk
->
 > The wizard creates the publication AND adds articles (tables) in one flow. DC2's publication is created later by the P2P Topology Wizard (Step 7).
 
 ### For apim_db
@@ -250,7 +261,8 @@ The wizard handles **three things** in one workflow:
 
 ### Set conflict resolution on DC2
 
-Run on DC2 against each database:
+The P2P Topology Wizard doesn't set `p2p_continue_onconflict` on DC2's publications. Run on DC2 against each database:
+
 ```sql
 -- apim_db
 EXEC sp_changepublication @publication = 'apim_db_pub', @property = 'p2p_continue_onconflict', @value = 'true';
@@ -263,7 +275,7 @@ GO
 
 ---
 
-## Step 8: Verify Replication
+## Step 9: Verify Replication
 
 ### Replication Monitor
 
@@ -293,7 +305,7 @@ Status values: **3** = Running, **4** = Idle, **6** = Succeeded.
 
 ---
 
-## Step 9: Test Replication
+## Step 10: Test Replication
 
 **DC1 → DC2:** Run on DC1 against `apim_db`:
 ```sql
@@ -317,7 +329,7 @@ Check on DC1: `SELECT * FROM AM_ALERT_TYPES WHERE ALERT_TYPE_ID = 998;`
 
 ---
 
-## Step 10: Deploy APIM
+## Step 11: Deploy APIM
 
 > **Critical: Start DC1 first, then DC2.** APIM inserts seed data on first startup. Starting sequentially avoids conflicts.
 
@@ -353,7 +365,7 @@ USE master; EXEC sp_removedbreplication @dbname = 'apim_db'; GO
 
 | Step | Action | DC1 | DC2 |
 |------|--------|-----|-----|
-| Pre | Hosts file + SQL Agent | Add DC2 hostname, start Agent | Add DC1 hostname, start Agent |
+| Pre | Hosts file + SQL Agent + NSG | Add DC2 hostname, start Agent | Add DC1 hostname, start Agent |
 | 1 | Connect in SSMS | `apim-4-7-eus1-s` | `apim-4-7-wus2-s` |
 | 2 | Replication logins | `repl_dc2` | `repl_dc1` |
 | 3 | Configure distribution | Self as distributor | Self as distributor |
@@ -361,10 +373,9 @@ USE master; EXEC sp_removedbreplication @dbname = 'apim_db'; GO
 | 4 | Create databases | `apim_db`, `shared_db` + snapshot isolation | Same |
 | 5 | Table scripts | `dc1/` scripts (odd IDs) | `dc2/` scripts (even IDs) |
 | 5a | Replication DB users | `repl_dc2` in both DBs | `repl_dc1` in both DBs |
-| 6 | New Publication Wizard | `apim_db_pub` + `shared_db_pub` | *(Step 7 handles this)* |
-| 6+ | Enable P2P settings | Publication Properties + SQL | *(Step 7 handles this)* |
-| 7 | P2P Topology Wizard | Creates DC2 pub + both subscriptions | *(automatic)* |
-| 7+ | Conflict resolution on DC2 | — | `sp_changepublication` |
-| 8 | Verify | Replication Monitor | Replication Monitor |
-| 9 | Test | Row 999 → appears on DC2 | Row 998 → appears on DC1 |
-| 10 | Deploy APIM | **Start first** | Start after DC1 seed replicates |
+| 6 | Create publications (SSMS wizard) | `apim_db_pub` + `shared_db_pub`, P2P enabled | — (created by Step 7 wizard) |
+| 7 | P2P Topology Wizard | Adds DC2 peer, creates both subscriptions | Pub + subscriptions created by wizard |
+| 7+ | Conflict resolution on DC2 | — | `sp_changepublication` (`p2p_continue_onconflict`) |
+| 9 | Verify | Replication Monitor | Replication Monitor |
+| 10 | Test | Row 999 → appears on DC2 | Row 998 → appears on DC1 |
+| 11 | Deploy APIM | **Start first** | Start after DC1 seed replicates |
