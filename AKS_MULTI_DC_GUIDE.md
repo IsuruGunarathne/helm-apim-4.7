@@ -332,7 +332,7 @@ kubectl wait --for=condition=ready pod -l deployment=wso2am-gw -n apim --timeout
 
 ## Part 4.5: Fix OAuth Callback URLs for DC2
 
-When DC1 starts first, it registers the Publisher and DevPortal as OAuth applications with callback URLs pointing to `cp.eus1.apim.example.com`. These registrations get replicated to DC2 via pglogical. DC2's Publisher/DevPortal will fail to login with **"Registered callback does not match with the provided url"** because the registered callbacks don't include the `wus2` hostname.
+When DC1 starts first, it registers the Publisher, DevPortal, and Admin Portal as OAuth applications with callback URLs pointing to `cp.eus1.apim.example.com`. These registrations get replicated to DC2 via pglogical. DC2's Publisher/DevPortal/Admin Portal will fail to login with **"Registered callback does not match with the provided url"** because the registered callbacks don't include the `wus2` hostname.
 
 **Fix:** Update the OAuth callback URLs to include both DC hostnames.
 
@@ -349,8 +349,13 @@ When DC1 starts first, it registers the Publisher and DevPortal as OAuth applica
    regexp=(https://cp.eus1.apim.example.com/devportal/services/auth/callback/login|https://cp.eus1.apim.example.com/devportal/services/auth/callback/logout|https://cp.wus2.apim.example.com/devportal/services/auth/callback/login|https://cp.wus2.apim.example.com/devportal/services/auth/callback/logout)
    ```
 7. Click **Update**
+8. Edit `apim_admin_portal` and update its **Callback Url** to:
+   ```
+   regexp=(https://cp.eus1.apim.example.com/admin/services/auth/callback/login|https://cp.eus1.apim.example.com/admin/services/auth/callback/logout|https://cp.wus2.apim.example.com/admin/services/auth/callback/login|https://cp.wus2.apim.example.com/admin/services/auth/callback/logout)
+   ```
+9. Click **Update**
 
-DC2's Publisher and DevPortal login should now work.
+DC2's Publisher, DevPortal, and Admin Portal login should now work.
 
 > **Note:** This only needs to be done once. The updated callback URLs are stored in `apim_db` and will persist across pod restarts.
 
