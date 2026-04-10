@@ -106,7 +106,7 @@ az vm create \
 - DC2 is smaller (2 vCPU / 8 GB RAM) because it only runs a DB container.
 - 128 GB OS disk is enough for the stock images plus Docker volumes in a lab. If you want extra headroom for archive logs or image caches, attach and mount a data disk and point `/var/lib/docker` at it — that's purely optional and not covered here.
 
-> **Dedicated OGG hub (optional)**: If you prefer the OGG Free container on its own VM, provision a third small Ubuntu VM in `eastus` on `oracle-subnet` (same shape, 2 vCPU / 8 GB), run only the `docker run …/goldengate-free` command from Part 5 there, and move the NSG rule for TCP 443 from the DC1 VM to that VM. The DB containers in Parts 3–4 stay unchanged.
+> **Dedicated OGG hub (optional)**: If you prefer the OGG Free container on its own VM, provision a third small Ubuntu VM in `eastus` on `oracle-subnet` (same shape, 2 vCPU / 8 GB), run only the `docker run …/goldengate-oracle-free` command from Part 5 there, and move the NSG rule for TCP 443 from the DC1 VM to that VM. The DB containers in Parts 3–4 stay unchanged.
 
 ### 1.2 NSG Rules
 
@@ -222,7 +222,7 @@ Oracle images require an Oracle SSO account and explicit acceptance of each imag
 
 1. Open <https://container-registry.oracle.com> in a browser and sign in with your Oracle SSO account.
 2. Browse to **Database → free** and click **Continue** to accept the license terms.
-3. Browse to **GoldenGate → goldengate-free** and click **Continue** to accept the license terms.
+3. Browse to **GoldenGate → goldengate-oracle-free** and click **Continue** to accept the license terms. (This is the Oracle-targeted variant under Oracle Free Use Terms — do not confuse it with `goldengate-oracle`, which requires the paid Oracle Standard Terms.)
 
 ### 2.3 Log in and pull images
 
@@ -239,7 +239,7 @@ docker pull container-registry.oracle.com/database/free:latest
 On **DC1 only** (where the OGG hub container will run):
 
 ```bash
-docker pull container-registry.oracle.com/goldengate/goldengate-free:latest
+docker pull container-registry.oracle.com/goldengate/goldengate-oracle-free:latest
 ```
 
 The DB image is ~9 GB and the OGG image is ~2 GB, so the pulls take several minutes.
@@ -357,6 +357,8 @@ ALTER SESSION SET CONTAINER = CDB$ROOT;
 
 These are CDB-level settings required by GoldenGate. Run **on both DC1 and DC2**, still inside `sqlplus / as sysdba`:
 
+> **Important:** these statements run against the **DB container** (the `docker exec -it oracle-db sqlplus / as sysdba` session from §4.1), not against the OGG container or OGG web UI. A prior implementer tried to run the archive-log sequence from the OGG side and it did not work — enabling archive logging has to happen on the database itself.
+
 ```sql
 -- Enable archive log mode (required for Extract to mine redo)
 SHUTDOWN IMMEDIATE;
@@ -463,7 +465,7 @@ docker run -d \
   --network host \
   --restart unless-stopped \
   -v ogg-hub-data:/u01 \
-  container-registry.oracle.com/goldengate/goldengate-free:latest
+  container-registry.oracle.com/goldengate/goldengate-oracle-free:latest
 ```
 
 ### 5.2 Get the initial admin password
@@ -604,6 +606,36 @@ SHOW PARAMETER ENABLE_GOLDENGATE_REPLICATION;
 SELECT SEQUENCE#, FIRST_TIME FROM V$ARCHIVED_LOG ORDER BY FIRST_TIME DESC FETCH FIRST 5 ROWS ONLY;
 ```
 
+### Gateway fails to deploy APIs after a publish on the other DC
+
+**Symptom.** After publishing or updating an API on the DC1 control plane, the DC2 gateway pods log:
+
+```
+ERROR {org.wso2.carbon.apimgt.gateway.InMemoryAPIDeployer}
+  - Error retrieving artifacts for API <uuid>. Storage returned null
+ERROR {org.wso2.carbon.apimgt.gateway.InMemoryAPIDeployer}
+  - Error deploying <uuid> in Gateway
+  org.wso2.carbon.apimgt.impl.gatewayartifactsynchronizer.exception.ArtifactSynchronizerException:
+    Error retrieving artifacts for API <uuid>. Storage returned null
+```
+
+**Root cause.** The control plane publishes a JMS event as soon as it commits the API row to the DC1 database. The DC2 gateway receives the event via the Traffic Manager within milliseconds and immediately tries to fetch the artifact from its **local** DC2 database. GoldenGate replication is asynchronous — a large commit can take several seconds to land on the far side — so the DC2 gateway wins the race and reads a row that isn't there yet.
+
+**Mitigation.** Raise the gateway's artifact-deployment retry window so a retry catches the row once replication lands it. The relevant APIM property is `deployment_retry_duration` under `[apim.sync_runtime_artifacts.gateway]`, in milliseconds. The gateway Helm chart exposes `wso2.apim.configurations.extraConfigs` as a passthrough into `deployment.toml`, so the simplest edit is to add this to `distributed/gateway/azure-values-dc1-oracle.yaml` **and** `distributed/gateway/azure-values-dc2-oracle.yaml`:
+
+```yaml
+wso2:
+  apim:
+    configurations:
+      extraConfigs: |
+        [apim.sync_runtime_artifacts.gateway]
+        deployment_retry_duration = 30000
+```
+
+Start at 30000 (30 s). If the round-trip replication in §6.3 routinely exceeds 30 s under load, raise it to 60000. The value is read at gateway startup, so `helm upgrade` followed by a gateway pod rollout is required to pick up the change.
+
+**Verification.** Re-run the round-trip test from §6.3 on `apim_db` to confirm replication is healthy, then publish an API from the DC1 publisher and watch the DC2 gateway pod logs — the `Storage returned null` error should no longer appear, and the API should be reachable through the DC2 gateway within the retry window.
+
 ### OGG Free web UI
 
 - Pipeline stuck in **ERROR**: click the pipeline → **Logs** tab → copy the error string. The most common causes are: missing ACDR metadata on a table that was added after pipeline start (stop the pipeline, reopen the Mapping step, re-enable ACDR, start), and DB connectivity (run `nc -zv` from the DC1 VM to the target DC's port 1521).
@@ -639,7 +671,7 @@ Then re-run the `CREATE PLUGGABLE DATABASE` + grants + schema-load steps from Pa
 ## Summary of Operations
 
 1. **Provision (Part 1)** — 2 Ubuntu 22.04 VMs (`apim-4-7-eus1-oracle`, `apim-4-7-wus2-oracle`), NSG rules for 1521 on both and 443 on DC1, VNet peering.
-2. **Docker (Part 2)** — install `docker.io`, accept Oracle CR terms in a browser once, `docker login` and pull `database/free` on both VMs plus `goldengate/goldengate-free` on DC1.
+2. **Docker (Part 2)** — install `docker.io`, accept Oracle CR terms in a browser once, `docker login` and pull `database/free` on both VMs plus `goldengate/goldengate-oracle-free` on DC1.
 3. **DB containers (Part 3)** — `docker run` the `oracle-db` container on both VMs with `--network host`, `-e ORACLE_PWD=Apim@123`, and a named volume; wait for `DATABASE IS READY TO USE!`.
 4. **Schemas (Part 4)** — create `apim_db` + `shared_db` PDBs, create `apimadmin` with grants, enable archive log + force logging + supplemental logging + `enable_goldengate_replication`, load `dbscripts/dc1/Oracle/` on DC1 and `dbscripts/dc2/Oracle/` on DC2 as-is.
 5. **OGG container (Part 5)** — `docker run` `ogg-hub` on DC1, grab the initial admin password from the logs, tunnel to the web UI via the jump-box.
