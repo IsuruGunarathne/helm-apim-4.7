@@ -296,7 +296,7 @@ From the VM host:
 docker exec -it oracle-db sqlplus / as sysdba
 
 # Or via listener auth
-docker exec -it oracle-db sqlplus sys/Apim@123@FREE as sysdba
+docker exec -it oracle-db sqlplus 'sys/"Apim@123"@FREE' as sysdba
 ```
 
 Sanity check:
@@ -390,6 +390,8 @@ The `dbscripts/dc1/Oracle/` and `dbscripts/dc2/Oracle/` directories already cont
 
 On each VM, clone the repo and copy the correct per-DC pack into its DB container.
 
+> **Why the funny quoting?** The password `Apim@123` contains an `@`, and sqlplus's Easy Connect parser treats the first `@` in `user/password@host/service` as the start of the host part. Wrapping the password in double quotes inside a single-quoted shell argument (`'apimadmin/"Apim@123"@localhost:1521/apim_db'`) tells sqlplus exactly where the password ends. Without the quotes you'll see `ORA-12262: Could not resolve hostname 123@localhost`.
+
 **DC1 VM:**
 
 ```bash
@@ -406,10 +408,10 @@ docker cp dbscripts/dc1/Oracle/tables_23c.sql           oracle-db:/tmp/shared_ta
 docker cp dbscripts/dc1/Oracle/sequences_23c.sql        oracle-db:/tmp/shared_sequences.sql
 
 # Run them
-docker exec -i oracle-db sqlplus apimadmin/Apim@123@localhost:1521/apim_db   @/tmp/apim_tables.sql
-docker exec -i oracle-db sqlplus apimadmin/Apim@123@localhost:1521/apim_db   @/tmp/apim_sequences.sql
-docker exec -i oracle-db sqlplus apimadmin/Apim@123@localhost:1521/shared_db @/tmp/shared_tables.sql
-docker exec -i oracle-db sqlplus apimadmin/Apim@123@localhost:1521/shared_db @/tmp/shared_sequences.sql
+docker exec -i oracle-db sqlplus 'apimadmin/"Apim@123"@localhost:1521/apim_db'   @/tmp/apim_tables.sql
+docker exec -i oracle-db sqlplus 'apimadmin/"Apim@123"@localhost:1521/apim_db'   @/tmp/apim_sequences.sql
+docker exec -i oracle-db sqlplus 'apimadmin/"Apim@123"@localhost:1521/shared_db' @/tmp/shared_tables.sql
+docker exec -i oracle-db sqlplus 'apimadmin/"Apim@123"@localhost:1521/shared_db' @/tmp/shared_sequences.sql
 ```
 
 **DC2 VM:** same commands, but replace `dc1/Oracle` with `dc2/Oracle` in all four `docker cp` lines.
@@ -419,7 +421,7 @@ docker exec -i oracle-db sqlplus apimadmin/Apim@123@localhost:1521/shared_db @/t
 On either VM:
 
 ```bash
-docker exec -it oracle-db sqlplus apimadmin/Apim@123@localhost:1521/apim_db
+docker exec -it oracle-db sqlplus 'apimadmin/"Apim@123"@localhost:1521/apim_db'
 ```
 
 ```sql
@@ -543,7 +545,7 @@ For each pipeline walk through the wizard:
 2. Round-trip test on `apim_db`. From **DC1**:
 
    ```bash
-   docker exec -it oracle-db sqlplus apimadmin/Apim@123@localhost:1521/apim_db
+   docker exec -it oracle-db sqlplus 'apimadmin/"Apim@123"@localhost:1521/apim_db'
    ```
    ```sql
    UPDATE AM_APPLICATION
@@ -556,7 +558,7 @@ For each pipeline walk through the wizard:
    Then on **DC2**, within a few seconds:
 
    ```bash
-   docker exec -it oracle-db sqlplus apimadmin/Apim@123@localhost:1521/apim_db
+   docker exec -it oracle-db sqlplus 'apimadmin/"Apim@123"@localhost:1521/apim_db'
    ```
    ```sql
    SELECT DESCRIPTION FROM AM_APPLICATION
