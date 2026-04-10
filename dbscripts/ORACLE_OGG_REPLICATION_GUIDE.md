@@ -31,9 +31,12 @@ The GoldenGate Free container is colocated on the DC1 VM and runs both Extract a
 └──────────────────────────────┘          └──────────────────────────────┘
 ```
 
-**Pipelines on the OGG Free hub (both Active-Active recipe, ACDR enabled):**
-- `apim-db-bidir`: bidirectional replication for the `apim_db` PDB, schema `apimadmin`
-- `shared-db-bidir`: bidirectional replication for the `shared_db` PDB, schema `apimadmin`
+**GoldenGate processes on the OGG Free hub** (GG Free 23.26 has no "Pipelines" abstraction — Extracts and Replicats are built directly in Administration Service):
+
+- **4 Integrated Extracts** — one per source PDB — capturing `APIMADMIN.*` to local trail files `aa` (DC1 apim), `ab` (DC2 apim), `ba` (DC1 shared), `bb` (DC2 shared).
+- **4 Parallel Nonintegrated Replicats** — one per target PDB — each reading the *opposite* DC's trail for the same DB and applying via the dedicated `ggadmin` user.
+- **Loopback prevention**: Extracts use `TRANLOGOPTIONS EXCLUDEUSER ggadmin`, so rows that Replicat applies on the far side are filtered out when Extract re-captures them.
+- **Trail naming**: first letter = DB (`a` = apim, `b` = shared), second letter = source DC (`a` = DC1, `b` = DC2). So trail `ab` = "apim from DC2".
 
 ## Connection Details
 
@@ -462,6 +465,84 @@ nc -zv 10.2.4.4 1521
 
 If either `nc` call fails, re-check the NSG rules in §1.2 and the VNet peering in §1.3 before continuing.
 
+### 4.6 Create the `ggadmin` user and grant GoldenGate privileges
+
+GoldenGate Free 23.26 needs a dedicated local user `ggadmin` inside every PDB — it's the user Replicat will connect as when applying rows, and it's the username Extract's `TRANLOGOPTIONS EXCLUDEUSER ggadmin` filters out to prevent loopback.
+
+Prior Oracle GG docs tell you to provision `ggadmin` by calling the helper wrapper `dbms_goldengate_auth.grant_admin_privilege('GGADMIN')`. **That wrapper is disabled in GG Free 23.26** — any call fails with `ORA-26988: Cannot grant Oracle GoldenGate privileges. The procedure GRANT_ADMIN_PRIVILEGE is disabled`, even though `enable_goldengate_replication=TRUE` is set at the CDB level in §4.2 (and propagates to PDBs automatically). The workaround is to grant the required system and `EXECUTE` privileges directly.
+
+A second thing: **`LOGMINING` is not included in the `DBA` role in 23ai**. Extract mines redo logs via LogMiner, so the user Extract connects as needs an explicit `GRANT LOGMINING`. In our setup Extract connects as `apimadmin` (via the `dc1_apim` / `dc2_apim` / `dc1_shared` / `dc2_shared` aliases we'll create in §6.1), so `apimadmin` needs `LOGMINING` on top of the `DBA` it already got in §4.1.
+
+Run this **on both DC1 and DC2**, inside `sqlplus / as sysdba`:
+
+```bash
+docker exec -it oracle-db sqlplus / as sysdba
+```
+
+```sql
+-- =====================================================================
+-- apim_db
+-- =====================================================================
+ALTER SESSION SET CONTAINER = apim_db;
+
+-- ggadmin: dedicated GG user (Replicat target + EXCLUDEUSER filter)
+CREATE USER ggadmin IDENTIFIED BY "Apim@123";
+GRANT DBA                    TO ggadmin;
+GRANT LOGMINING              TO ggadmin;
+GRANT SELECT ANY TRANSACTION TO ggadmin;
+GRANT EXECUTE ON DBMS_LOGMNR      TO ggadmin;
+GRANT EXECUTE ON DBMS_LOGMNR_D    TO ggadmin;
+GRANT EXECUTE ON DBMS_FLASHBACK   TO ggadmin;
+GRANT EXECUTE ON DBMS_CAPTURE_ADM TO ggadmin;
+GRANT EXECUTE ON DBMS_APPLY_ADM   TO ggadmin;
+GRANT EXECUTE ON DBMS_STREAMS_ADM TO ggadmin;
+GRANT EXECUTE ON DBMS_AQADM       TO ggadmin;
+
+-- apimadmin: Extract control user — needs LOGMINING on top of the existing DBA role
+GRANT LOGMINING              TO apimadmin;
+GRANT SELECT ANY TRANSACTION TO apimadmin;
+GRANT EXECUTE ON DBMS_LOGMNR      TO apimadmin;
+GRANT EXECUTE ON DBMS_LOGMNR_D    TO apimadmin;
+GRANT EXECUTE ON DBMS_FLASHBACK   TO apimadmin;
+GRANT EXECUTE ON DBMS_CAPTURE_ADM TO apimadmin;
+GRANT EXECUTE ON DBMS_APPLY_ADM   TO apimadmin;
+GRANT EXECUTE ON DBMS_STREAMS_ADM TO apimadmin;
+GRANT EXECUTE ON DBMS_AQADM       TO apimadmin;
+
+-- =====================================================================
+-- shared_db — repeat the same block
+-- =====================================================================
+ALTER SESSION SET CONTAINER = shared_db;
+
+CREATE USER ggadmin IDENTIFIED BY "Apim@123";
+GRANT DBA                    TO ggadmin;
+GRANT LOGMINING              TO ggadmin;
+GRANT SELECT ANY TRANSACTION TO ggadmin;
+GRANT EXECUTE ON DBMS_LOGMNR      TO ggadmin;
+GRANT EXECUTE ON DBMS_LOGMNR_D    TO ggadmin;
+GRANT EXECUTE ON DBMS_FLASHBACK   TO ggadmin;
+GRANT EXECUTE ON DBMS_CAPTURE_ADM TO ggadmin;
+GRANT EXECUTE ON DBMS_APPLY_ADM   TO ggadmin;
+GRANT EXECUTE ON DBMS_STREAMS_ADM TO ggadmin;
+GRANT EXECUTE ON DBMS_AQADM       TO ggadmin;
+
+GRANT LOGMINING              TO apimadmin;
+GRANT SELECT ANY TRANSACTION TO apimadmin;
+GRANT EXECUTE ON DBMS_LOGMNR      TO apimadmin;
+GRANT EXECUTE ON DBMS_LOGMNR_D    TO apimadmin;
+GRANT EXECUTE ON DBMS_FLASHBACK   TO apimadmin;
+GRANT EXECUTE ON DBMS_CAPTURE_ADM TO apimadmin;
+GRANT EXECUTE ON DBMS_APPLY_ADM   TO apimadmin;
+GRANT EXECUTE ON DBMS_STREAMS_ADM TO apimadmin;
+GRANT EXECUTE ON DBMS_AQADM       TO apimadmin;
+
+EXIT;
+```
+
+> **If you see `ORA-26988` on any `GRANT` line above**, you've accidentally called `dbms_goldengate_auth.grant_admin_privilege` instead of the direct `GRANT` statements — rerun the block exactly as written. No wrapper procedures.
+
+Run the same block on the DC2 VM's `oracle-db` container. Both DCs must end with identical `ggadmin` credentials (same password) so that a single set of GoldenGate DB connections in the OGG hub can authenticate against both sides.
+
 ---
 
 ## Part 5: Start the OGG Free Container on DC1
@@ -545,86 +626,187 @@ After the password change, you land on Service Manager's home. The pipelines, co
 
 ## Part 6: Configure Active-Active Replication (GG Free Web UI)
 
-The rest of this section follows Oracle's official quickstart:
-<https://docs.oracle.com/en/middleware/goldengate/free/23/uggfe/create-active-active-database-replication.html>
-
-Keep the quickstart open in a second tab — it has screenshots for each step. This section lists the exact values to enter for the WSO2 APIM multi-DC case.
+GG Free 23.26 no longer exposes a "Pipelines / Active-Active Database Replication" recipe wizard — that abstraction was removed, and administrators now build the Active-Active topology by hand out of Database Connections, Extracts, and Replicats. This section walks through the exact clicks and values for the WSO2 APIM multi-DC case on 23.26.
 
 All of the steps below happen inside **Administration Service** (the page you reached at the end of §5.4), not in Service Manager. If your left nav shows `Home / User Administration / Deployments / Certificate Management / …` you are still in Service Manager — go back to §5.4 and click **Deployments → Local → Administration Service**.
 
-### 6.1 Create 4 Database Connections
+Endpoint of this section: **4 Extracts + 4 Replicats, all in STOPPED state**. ACDR configuration, coordinated process startup, and the round-trip verification test are tracked as a stub in §6.6 — they'll be filled in after the live deployment has them running cleanly.
 
-In Administration Service, go to **Connections → Add Connection** and create four entries:
+### 6.1 Create 4 `apimadmin` Database Connections
 
-| Connection name | Hostname  | Port | Service name | Database user | Password   |
-|-----------------|-----------|------|--------------|---------------|------------|
-| `dc1_apim`      | 10.2.4.4  | 1521 | apim_db      | sys           | `Apim@123` |
-| `dc1_shared`    | 10.2.4.4  | 1521 | shared_db    | sys           | `Apim@123` |
-| `dc2_apim`      | 10.1.4.4  | 1521 | apim_db      | sys           | `Apim@123` |
-| `dc2_shared`    | 10.1.4.4  | 1521 | shared_db    | sys           | `Apim@123` |
+In Administration Service, open the left nav and click **DB Connections → Add Connection**.
 
-For each connection:
+The 23.26 form has **no separate Hostname / Port / Service Name fields and no SYSDBA toggle** — everything goes in a single **User ID** field using Oracle Easy Connect syntax (`user@//host:port/service`). For each of the four connections below, fill in:
 
-1. Tick **SYSDBA privileges available**.
-2. In the **GoldenGate user** section, enter `ggadmin` and choose a GG admin password (remember it — it's used inside each PDB).
-3. Click **Run analysis**. The UI checks archive log mode, supplemental logging, `enable_goldengate_replication`, and then generates a SQL script that creates the local `ggadmin` user inside the PDB with the required grants.
-4. Click **Run SQL** to apply the generated script, then **Save**.
+- **Credential Alias**: leave the default (it mirrors the Connection Name).
+- **User ID**: the Easy Connect string from the table.
+- **Password**: `Apim@123`.
+- **Domain**: `OracleGoldenGate` (default — leave as-is).
 
-Repeat for all four connections.
+| Connection name | User ID (Easy Connect)                  | Password    |
+|-----------------|-----------------------------------------|-------------|
+| `dc1_apim`      | `apimadmin@//10.2.4.4:1521/apim_db`     | `Apim@123`  |
+| `dc1_shared`    | `apimadmin@//10.2.4.4:1521/shared_db`   | `Apim@123`  |
+| `dc2_apim`      | `apimadmin@//10.1.4.4:1521/apim_db`     | `Apim@123`  |
+| `dc2_shared`    | `apimadmin@//10.1.4.4:1521/shared_db`   | `Apim@123`  |
 
-### 6.2 Create 2 Pipelines
+After saving all four, hover over each row and click the **Test** (plug) icon in the Actions column. A green "Connection successful" on all four is your proof that VNet peering, NSG rules, and the Oracle listener are all healthy. If any row fails, fix it before moving on — a broken credential at Extract-creation time produces confusing downstream errors.
 
-Go to **Pipelines → Create Pipeline** and create two pipelines using the **Active-Active Database Replication** recipe:
+> **Why `apimadmin` and not `sys`?** The old recipe wizard used `sys` + SYSDBA because it needed elevated privileges to auto-provision `ggadmin`. We pre-provisioned `ggadmin` manually in §4.6, so no SYSDBA connection is needed here. `apimadmin` already has `DBA` (from §4.1) plus the `LOGMINING` grants we just added in §4.6, which is the exact privilege set Extract needs.
 
-| Pipeline name     | Recipe                             | Source       | Target       |
-|-------------------|------------------------------------|--------------|--------------|
-| `apim-db-bidir`   | Active-Active Database Replication | `dc1_apim`   | `dc2_apim`   |
-| `shared-db-bidir` | Active-Active Database Replication | `dc1_shared` | `dc2_shared` |
+### 6.2 Per-connection database setup (checkpoint, trandata, heartbeat)
 
-For each pipeline walk through the wizard:
+Each of the four DB connections from §6.1 needs three one-time initialization steps before any Extract or Replicat can attach to it. Do all three **on each of the four connections** — the 23.26 UI exposes them as buttons in the connection detail pane (the page you land on after clicking a connection name in the DB Connections list).
 
-1. **Basics**: enter the pipeline name, pick the recipe.
-2. **Source & Target**: select the source and target connections per the table above.
-3. **Mapping**: select the `APIMADMIN` schema only. Deselect `PDBADMIN`, `SYS`, `SYSTEM`, and any other system schemas the UI lists.
-4. **Conflict detection (ACDR)**: enable **Automatic Conflict Detection and Resolution** on all APIM tables, with resolution strategy **Latest timestamp wins**. The recipe will auto-add the required ACDR metadata columns on first start.
-5. **Review**: confirm the summary, then click **Create**.
-6. On the pipeline detail page, click **Start**.
+**1. Checkpoint table** — stores Replicat recovery state. Click **Checkpoint → Add Checkpoint** and enter `GGADMIN.GGS_CHKPT` as the schema-qualified table name. Same table name on all four connections.
 
-### 6.3 Verify replication
+> **Why it must live in `GGADMIN` and not `APIMADMIN`**: the checkpoint table is written to on every Replicat commit. If it lived inside the replicated schema, Replicat's checkpoint UPDATEs would themselves be captured by Extract and ship back across the link, creating an infinite metadata loop. The `GGADMIN` schema is deliberately *not* listed in any `TABLE` directive in §6.4, so Extract ignores it.
 
-1. Both pipelines should reach status **RUNNING** with no red error badges. The Runtime view should show nonzero Extract and Replicat operation counters within a minute or two.
+**2. Schema-level Trandata** — adds supplemental logging to every table in `APIMADMIN`. Click **Trandata → Add Schema Trandata**, enter `APIMADMIN` as the schema name, and **tick "All Columns"**. All-columns logging is required for the latest-timestamp-wins conflict resolution we'll wire up in the §6.6 stub (ACDR needs every column of every row in the redo stream, not just the changed ones).
 
-2. Round-trip test on `apim_db`. From **DC1**:
+The UI will iterate over the schema and report the number of tables instrumented — expect ~246 on an `apim_db` connection and ~51 on a `shared_db` connection.
 
-   ```bash
-   docker exec -it oracle-db sqlplus 'apimadmin/"Apim@123"@localhost:1521/apim_db'
+**3. Heartbeat table** — the UI-installed heartbeat mechanism used to measure end-to-end replication lag. Click **Heartbeat → Add Heartbeat Table**. There are no parameters; it silently creates `GGADMIN.GG_HEARTBEAT_*` tables in the PDB.
+
+At the end of §6.2 you should have done **Checkpoint + Trandata + Heartbeat on all 4 connections = 12 UI actions**. Missing steps here surface later as confusing errors at Extract/Replicat create time, so it's worth a quick walk through each of the four connections to confirm all three are present before continuing.
+
+### 6.3 Create 4 `ggadmin` Database Connections
+
+Create a second set of four connections — identical in host/port/service to the `apimadmin` ones, but connecting as `ggadmin` with a `_gg` alias suffix. These will be used as the **target credentials** on all four Replicats in §6.5.
+
+> **Why a second set of connections?** Replicat must connect as `ggadmin` so that the rows it applies are tagged with that user in the redo stream, and every Extract's `TRANLOGOPTIONS EXCLUDEUSER ggadmin` filters those rows out of the return trip. If Replicat connected as `apimadmin`, the return-trip filter wouldn't match and every Replicat-applied row would loop across the link forever within seconds.
+
+Same wizard as §6.1, just with user and alias swapped:
+
+| Connection name   | User ID (Easy Connect)                  | Password    |
+|-------------------|-----------------------------------------|-------------|
+| `dc1_apim_gg`     | `ggadmin@//10.2.4.4:1521/apim_db`       | `Apim@123`  |
+| `dc1_shared_gg`   | `ggadmin@//10.2.4.4:1521/shared_db`     | `Apim@123`  |
+| `dc2_apim_gg`     | `ggadmin@//10.1.4.4:1521/apim_db`       | `Apim@123`  |
+| `dc2_shared_gg`   | `ggadmin@//10.1.4.4:1521/shared_db`     | `Apim@123`  |
+
+Click **Test** on each. A red "invalid credentials" here means you either skipped §4.6 on one of the two DCs, or used a different password when creating `ggadmin` on one side — fix before continuing.
+
+**Do not** run Checkpoint / Trandata / Heartbeat on these four. Those artifacts are already installed by §6.2 via the `apimadmin` connections and live at the PDB level, not per-connection — adding them a second time here duplicates the table definitions and fails.
+
+### 6.4 Create 4 Extracts
+
+Four Integrated Extracts, one per source PDB, each capturing `APIMADMIN.*` and writing to a dedicated two-letter trail on the `ogg-hub` volume. Extracts connect as `apimadmin` (via the non-`_gg` aliases from §6.1) because that user has the `LOGMINING` grants we added in §4.6; Replicats will connect as `ggadmin` in §6.5.
+
+> **Naming quirk**: GG MA process name limits are **8 characters for Extracts, 5 characters for Replicats**. The extra 3 characters Replicat reserves are for apply-thread suffixes (e.g. `RAPM1001`, `RAPM1002` when a Parallel Replicat spawns threads). That's why the Extract names below are 5–6 characters and the Replicat names in §6.5 are all 5.
+
+| Extract  | Source PDB       | USERIDALIAS   | EXTTRAIL |
+|----------|------------------|---------------|----------|
+| `EAPIM1` | DC1 `apim_db`    | `dc1_apim`    | `aa`     |
+| `EAPIM2` | DC2 `apim_db`    | `dc2_apim`    | `ab`     |
+| `ESHR1`  | DC1 `shared_db`  | `dc1_shared`  | `ba`     |
+| `ESHR2`  | DC2 `shared_db`  | `dc2_shared`  | `bb`     |
+
+Go to **Administration Service → Extracts → Add Extract** and walk the four-step wizard for each row:
+
+1. **Extract Information**
+   - Extract Type: **Integrated Extract**
+   - Process Name: from the table above
+   - Description: optional
+
+2. **Extract Options**
+   - Trail → Name: the two-letter `EXTTRAIL` from the table (`aa` / `ab` / `ba` / `bb`)
+   - Subdirectory: blank
+   - Encryption Profile: `LocalWallet`
+   - Source Credentials → Domain: `OracleGoldenGate`
+   - Source Credentials → Alias: the `USERIDALIAS` from the table (the plain `apimadmin` one, **not** the `_gg` alias)
+   - Begin: `Now`
+
+3. **Managed Options**
+   - Profile Name: `Default`
+   - Critical to deployment health: **Off**
+   - Auto Start: **Off**
+   - Auto Restart: **Off**
+
+   > All 8 processes stay in a stopped state until §6.6 (ACDR + coordinated startup) is ready. AutoStart / AutoRestart would fight that.
+
+4. **Parameter File** — the wizard auto-generates the header:
+
    ```
-   ```sql
-   UPDATE AM_APPLICATION
-      SET DESCRIPTION = 'replication test from DC1 @ ' || TO_CHAR(SYSTIMESTAMP)
-    WHERE APPLICATION_ID = (SELECT MIN(APPLICATION_ID) FROM AM_APPLICATION);
-   COMMIT;
-   EXIT;
+   EXTRACT <name>
+   USERIDALIAS <alias> DOMAIN OracleGoldenGate
+   EXTTRAIL <trail>
    ```
 
-   Then on **DC2**, within a few seconds:
+   In the editable box below, **append** these two lines (they're required for Active-Active and not auto-generated):
 
-   ```bash
-   docker exec -it oracle-db sqlplus 'apimadmin/"Apim@123"@localhost:1521/apim_db'
    ```
-   ```sql
-   SELECT DESCRIPTION FROM AM_APPLICATION
-    WHERE APPLICATION_ID = (SELECT MIN(APPLICATION_ID) FROM AM_APPLICATION);
-   EXIT;
+   TRANLOGOPTIONS EXCLUDEUSER ggadmin
+   TABLE APIMADMIN.*;
    ```
 
-   Expect to see the same `replication test from DC1 ...` string.
+   `TRANLOGOPTIONS EXCLUDEUSER ggadmin` is the loopback filter — Extract skips any transaction whose committing session connected as `ggadmin`, and since every Replicat in §6.5 connects as `ggadmin`, Replicat-applied rows never re-capture. `TABLE APIMADMIN.*;` scopes capture to the APIM schema; the trailing semicolon is mandatory on `TABLE` directives and silently breaks things if you drop it.
 
-3. Reverse the test: run the `UPDATE` on DC2, then read it back on DC1. Both directions must work.
+Click **Create** (not *Create and Run*). Repeat for all four Extracts. At the end of §6.4 the Extracts table should show four rows all in **STOPPED** state.
 
-4. Repeat the round-trip test on `shared_db` against a shared-db table (e.g. `REG_RESOURCE`) to exercise the `shared-db-bidir` pipeline.
+### 6.5 Create 4 Replicats
 
-Once both directions on both pipelines are verified, replication is ready for the APIM control-plane, gateway, and traffic-manager pods to connect.
+Four Parallel Nonintegrated Replicats, one per target PDB, each reading the *opposite* DC's trail for the same DB and applying via the `_gg` aliases from §6.3.
+
+> **Why Nonintegrated and not Integrated Parallel Replicat?** The "Integrated" sub-type uses Oracle's XStream inbound server, which depends on the same `dbms_goldengate_auth.grant_admin_privilege` wrapper that gave us `ORA-26988` back in §4.6. Nonintegrated Parallel Replicat applies rows via plain SQL using the `DBA` privileges `ggadmin` already has and sidesteps the wrapper entirely. Throughput is more than adequate for APIM config-plane traffic.
+
+Trail rule reminder (because the cross-mapping is easy to get wrong): first letter of the trail = **DB** (`a` = apim, `b` = shared), second letter = **source DC** (`a` = DC1, `b` = DC2). Each Replicat reads the trail written by the Extract on the *other* side for the same DB:
+
+| Replicat | Reads trail | Written by | Applies to       | USERIDALIAS     |
+|----------|-------------|------------|------------------|-----------------|
+| `RAPM1`  | `ab`        | `EAPIM2`   | DC1 `apim_db`    | `dc1_apim_gg`   |
+| `RAPM2`  | `aa`        | `EAPIM1`   | DC2 `apim_db`    | `dc2_apim_gg`   |
+| `RSHR1`  | `bb`        | `ESHR2`    | DC1 `shared_db`  | `dc1_shared_gg` |
+| `RSHR2`  | `ba`        | `ESHR1`    | DC2 `shared_db`  | `dc2_shared_gg` |
+
+Go to **Administration Service → Replicats → Add Replicat** and walk the four-step wizard for each row:
+
+1. **Replicat Information**
+   - Replicat Type: **Parallel Replicat**
+   - Parallel Replicat Type: **Nonintegrated**
+   - Process Name: from the table (5 chars max — this is why they're `RAPM`, not `RAPIM`)
+   - Description: optional
+
+2. **Replicat Options**
+   - Replicat Trail → Name: the two-letter trail from the table
+   - Subdirectory: blank
+   - Encryption Profile: `LocalWallet`
+   - Target Credentials → Domain: `OracleGoldenGate`
+   - **Target Credentials → Alias: the `_gg` alias from the table** — this is the critical field. Selecting the non-`_gg` `apimadmin` alias here breaks loopback prevention and causes infinite replication within seconds.
+   - Checkpoint Table: `"GGADMIN"."GGS_CHKPT"` (pre-populated from §6.2)
+   - Begin: **Position in Trail**
+   - Trail Position: Sequence `0`, RBA `0`
+
+3. **Managed Options**
+   - Profile Name: `Default`
+   - Critical to deployment health: **Off**
+   - Auto Start: **Off**
+   - Auto Restart: **Off**
+
+4. **Parameter File** — the wizard auto-generates:
+
+   ```
+   REPLICAT <name>
+   USERIDALIAS <_gg alias> DOMAIN OracleGoldenGate
+   ```
+
+   The default editable box contains `MAP *.*, TARGET *.*;` — that's **too broad**. It would try to map system schemas like `SYS` / `SYSTEM` / `GGADMIN` and fail on the first non-APIM row. Replace it with:
+
+   ```
+   MAP APIMADMIN.*, TARGET APIMADMIN.*;
+   ```
+
+Click **Create** (not *Create and Run*). Repeat for all four Replicats. At the end of §6.5 the Administration Service Overview should show **4 Extracts + 4 Replicats, all in STOPPED state** — that's the checkpoint where this section ends.
+
+### 6.6 Next steps (to be added after live verification)
+
+The remaining phases of the Active-Active setup are intentionally not yet documented in this guide — they'll be folded in once they've been executed successfully against a real DC1/DC2 pair, so the runbook matches what actually works instead of what *should* work. The planned sections:
+
+- **6.7 — Enable Automatic Conflict Detection and Resolution (ACDR)**: loop over every `APIMADMIN.*` table in each PDB on both DCs and call `DBMS_GOLDENGATE_ADM.ADD_AUTO_CDR` to add hidden timestamp and tombstone columns for latest-timestamp-wins conflict resolution. Must be applied on both DCs **before any Replicat starts** — the first cross-DC update that arrives with a hidden-column payload will fail on a target that doesn't have the column yet.
+- **6.8 — Coordinated process startup**: start all 4 Extracts first (so trail files exist on disk), then all 4 Replicats. Starting a Replicat before its source Extract has produced any trail bytes leaves it spinning in an ABENDED state trying to open a file that doesn't exist.
+- **6.9 — Round-trip replication test**: DC1 → DC2 and DC2 → DC1 on both `apim_db` and `shared_db`, using `sqlplus` updates on representative tables (`AM_APPLICATION` for apim_db, a suitable `shared_db` table for the second direction).
+
+The surrounding sections of this guide — §Part 7 Troubleshooting, the `deployment_retry_duration` gateway tuning note, and everything before Part 6 — do not depend on §6.7–§6.9 and can be referenced now.
 
 ---
 
@@ -727,7 +909,7 @@ Then re-run the `CREATE PLUGGABLE DATABASE` + grants + schema-load steps from Pa
 1. **Provision (Part 1)** — 2 Ubuntu 22.04 VMs (`apim-4-7-eus1-oracle`, `apim-4-7-wus2-oracle`), NSG rules for 1521 on both VMs, VNet peering.
 2. **Docker (Part 2)** — install `docker.io`, accept Oracle CR terms in a browser once, `docker login` and pull `database/free` on both VMs plus `goldengate/goldengate-oracle-free` on DC1.
 3. **DB containers (Part 3)** — `docker run` the `oracle-db` container on both VMs with `--network host`, `-e ORACLE_PWD=Apim@123`, and a named volume; wait for `DATABASE IS READY TO USE!`.
-4. **Schemas (Part 4)** — create `apim_db` + `shared_db` PDBs, create `apimadmin` with grants, enable archive log + force logging + supplemental logging + `enable_goldengate_replication`, load `dbscripts/dc1/Oracle/` on DC1 and `dbscripts/dc2/Oracle/` on DC2 as-is.
-5. **OGG container (Part 5)** — `docker run` `ogg-hub` on DC1, grab the initial admin password from the logs, tunnel to the web UI via the jump-box.
-6. **Pipelines (Part 6)** — create 4 DB connections (`dc1_apim`, `dc1_shared`, `dc2_apim`, `dc2_shared`), create 2 pipelines (`apim-db-bidir`, `shared-db-bidir`) using the Active-Active recipe with ACDR + Latest-timestamp-wins, Start both, verify bidirectional round-trips on both PDBs.
-7. **Operate (Part 7)** — `docker logs`, `docker restart`, pipeline retry from the UI, hard-reset the DB volume only as a last resort.
+4. **Schemas (Part 4)** — create `apim_db` + `shared_db` PDBs, create `apimadmin` with grants, enable archive log + force logging + supplemental logging + `enable_goldengate_replication`, load `dbscripts/dc1/Oracle/` on DC1 and `dbscripts/dc2/Oracle/` on DC2 as-is, then create `ggadmin` per PDB with the direct-grants workaround for `ORA-26988` and grant `LOGMINING` to `apimadmin`.
+5. **OGG container (Part 5)** — `docker run` `ogg-hub` on DC1 with `/u02` volume and insecure mode, grab the initial admin password from the logs, SSH-tunnel ports 8011 (→ 9011) plus 9012–9015 to reach Service Manager + the four deployment services, navigate into `Deployments → Local → Administration Service`.
+6. **Active-Active topology (Part 6)** — §6.1 create 4 `apimadmin` DB connections, §6.2 install checkpoint (`GGADMIN.GGS_CHKPT`) + schema trandata (`APIMADMIN`, All Columns) + heartbeat on each, §6.3 create 4 `ggadmin` (`*_gg`) DB connections, §6.4 create 4 Integrated Extracts (`EAPIM1/2`, `ESHR1/2`) with `TRANLOGOPTIONS EXCLUDEUSER ggadmin` and `TABLE APIMADMIN.*;`, §6.5 create 4 Parallel Nonintegrated Replicats (`RAPM1/2`, `RSHR1/2`) with `MAP APIMADMIN.*, TARGET APIMADMIN.*;` — all 8 processes created in STOPPED state. §6.6 (ACDR, startup, verification) is a stub pending live verification.
+7. **Operate (Part 7)** — `docker logs`, `docker restart`, restart a stopped Extract/Replicat from the Administration Service UI, hard-reset the DB volume only as a last resort.
