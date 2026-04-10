@@ -1,6 +1,8 @@
-# Bi-Directional Replication with Oracle GoldenGate — Oracle 23c on Azure VMs
+# Bi-Directional Replication with Oracle GoldenGate Free — Oracle 23ai on Azure Ubuntu VMs
 
-Set up Oracle GoldenGate bi-directional replication between two Oracle 23c instances on Azure VMs for WSO2 API Manager 4.7 multi-DC deployment. A single GoldenGate hub VM in DC1 manages all replication processes.
+Set up Oracle 23ai Free bi-directional replication between two Azure data centers for WSO2 API Manager 4.7 multi-DC deployment, using **Oracle Container Registry images** (Database 23ai Free + GoldenGate Free 23ai) on **Ubuntu VMs**.
+
+The GoldenGate Free container is colocated on the DC1 VM and runs both Extract and Replicat pipelines from there against both DB containers over the peered VNet. Splitting it onto a dedicated third VM is possible but optional.
 
 ## Architecture
 
@@ -11,49 +13,49 @@ Set up Oracle GoldenGate bi-directional replication between two Oracle 23c insta
 │                               │          │                               │
 │  ┌─────────────────────────┐  │          │  ┌─────────────────────────┐  │
 │  │ apim-4-7-eus1-oracle    │  │          │  │ apim-4-7-wus2-oracle    │  │
-│  │ apim_db + shared_db     │  │          │  │ apim_db + shared_db     │  │
-│  │ Sequences: 1,3,5,7...   │  │          │  │ Sequences: 2,4,6,8...   │  │
-│  │ DCID: DC1               │  │          │  │ DCID: DC2               │  │
-│  │ IP: 10.2.4.4            │  │          │  │ IP: 10.1.4.4            │  │
-│  └──────────┬──────────────┘  │          │  └──────────┬──────────────┘  │
-│             │                  │          │             │                  │
-│  ┌──────────▼──────────────┐  │  VNet    │             │                  │
-│  │ GoldenGate Hub VM       │  │  Peering │             │                  │
-│  │ EXT_DC1 → trail → REP_DC2──┼──────────┼─────────────┘                  │
-│  │ EXT_DC2 ← trail ← REP_DC1──┼──────────┼─────────────┘                  │
-│  │ IP: 10.2.4.5            │  │          │                               │
+│  │ (Ubuntu 22.04 LTS)      │  │          │  │ (Ubuntu 22.04 LTS)      │  │
+│  │                          │  │          │  │                          │  │
+│  │  oracle-db container:    │  │          │  │  oracle-db container:    │  │
+│  │   apim_db + shared_db    │  │  VNet    │  │   apim_db + shared_db    │  │
+│  │   Sequences 1,3,5,7...   │◄─┼──Peering─┼──►  Sequences 2,4,6,8...   │  │
+│  │   DCID: DC1              │  │          │  │   DCID: DC2              │  │
+│  │                          │  │          │  │                          │  │
+│  │  ogg-hub container:      │  │          │  │  IP: 10.1.4.4            │  │
+│  │   Active-Active pipelines│  │          │  └─────────────────────────┘  │
+│  │   (apim-db, shared-db)   │  │          │                               │
+│  │                          │  │          │                               │
+│  │ IP: 10.2.4.4             │  │          │                               │
 │  └─────────────────────────┘  │          │                               │
 │                               │          │                               │
-│  Jump-box VM (x.x.1.0/24)    │          │  Jump-box VM (x.x.1.0/24)    │
+│  Jump-box VM (x.x.1.0/24)     │          │  Jump-box VM (x.x.1.0/24)     │
 └──────────────────────────────┘          └──────────────────────────────┘
 ```
 
-**GoldenGate processes on the hub:**
-- `EXT_DC1`: Extracts changes from DC1 Oracle DB → local trail `./dirdat/d1`
-- `EXT_DC2`: Extracts changes from DC2 Oracle DB → local trail `./dirdat/d2`
-- `REP_DC2`: Reads trail `d1` → applies to DC2 Oracle DB
-- `REP_DC1`: Reads trail `d2` → applies to DC1 Oracle DB
+**Pipelines on the OGG Free hub (both Active-Active recipe, ACDR enabled):**
+- `apim-db-bidir`: bidirectional replication for the `apim_db` PDB, schema `apimadmin`
+- `shared-db-bidir`: bidirectional replication for the `shared_db` PDB, schema `apimadmin`
 
 ## Connection Details
 
 ```bash
-# DC1 — East US 1 (Oracle DB VM)
+# DC1 — East US 1 (Oracle DB + OGG on the same VM)
 export DC1_HOST=10.2.4.4
 export DC1_PORT=1521
-export DC1_USER=apimadmineast
-export DC1_PASS="{your-password}"
-export DC1_SID=FREE        # Oracle 23c Free SID, or your CDB name
+export DC1_USER=apimadmin
+export DC1_PASS="Apim@123"
 
-# DC2 — West US 2 (Oracle DB VM)
+# DC2 — West US 2 (Oracle DB only)
 export DC2_HOST=10.1.4.4
 export DC2_PORT=1521
-export DC2_USER=apimadminwest
-export DC2_PASS="{your-password}"
-export DC2_SID=FREE
+export DC2_USER=apimadmin
+export DC2_PASS="Apim@123"
 
-# GoldenGate Hub VM (DC1 — East US 1)
-export OGG_HOST=10.2.4.5
+# GoldenGate Free web UI (served from the ogg-hub container on the DC1 VM)
+export OGG_HOST=10.2.4.4
+export OGG_UI_PORT=443
 ```
+
+> **Password placeholder**: `Apim@123` is used throughout as a copy-paste-friendly default. Replace it with a strong password for any non-lab deployment, and keep it in sync across the `-e ORACLE_PWD=...` env var, PDB admin users, the `apimadmin` grants, and the Helm values files under `distributed/*/azure-values-dc*-oracle.yaml`.
 
 ---
 
@@ -61,7 +63,7 @@ export OGG_HOST=10.2.4.5
 
 ### 1.1 Create VMs
 
-Create three VMs total: two Oracle DB VMs (one per region) and one GoldenGate hub VM in DC1.
+Two Ubuntu 22.04 LTS VMs — DC1 colocates the DB and OGG containers, DC2 runs only the DB container.
 
 ```bash
 RG="rg-WSO2-APIM-4.7.0-release-isuruguna"
@@ -70,54 +72,45 @@ RG="rg-WSO2-APIM-4.7.0-release-isuruguna"
 DC1_VNET_NAME=$(az network vnet list --resource-group $RG --query "[?location=='eastus']" -o tsv --query "[0].name")
 DC2_VNET_NAME=$(az network vnet list --resource-group $RG --query "[?location=='westus2']" -o tsv --query "[0].name")
 
-# DC1 — Oracle DB VM (East US 1, Oracle subnet)
+# DC1 — Oracle DB + OGG VM (East US 1, Oracle subnet)
 az vm create \
   --resource-group $RG \
   --name apim-4-7-eus1-oracle \
   --location eastus \
-  --image Oracle:oracle-linux:ol89-lvm-gen2:latest \
-  --size Standard_D4s_v3 \
-  --admin-username azureuser \
-  --generate-ssh-keys \
-  --vnet-name $DC1_VNET_NAME \
-  --subnet oracle-subnet \
-  --public-ip-address "" \
-  --os-disk-size-gb 128 \
-  --data-disk-sizes-gb 256
-
-# DC2 — Oracle DB VM (West US 2, Oracle subnet)
-az vm create \
-  --resource-group $RG \
-  --name apim-4-7-wus2-oracle \
-  --location westus2 \
-  --image Oracle:oracle-linux:ol89-lvm-gen2:latest \
-  --size Standard_D4s_v3 \
-  --admin-username azureuser \
-  --generate-ssh-keys \
-  --vnet-name $DC2_VNET_NAME \
-  --subnet oracle-subnet \
-  --public-ip-address "" \
-  --os-disk-size-gb 128 \
-  --data-disk-sizes-gb 256
-
-# GoldenGate Hub VM (East US 1, Oracle subnet)
-az vm create \
-  --resource-group $RG \
-  --name apim-4-7-eus1-ogg \
-  --location eastus \
-  --image Oracle:oracle-linux:ol89-lvm-gen2:latest \
-  --size Standard_D4s_v3 \
+  --image Canonical:0001-com-ubuntu-server-jammy:22_04-lts-gen2:latest \
+  --size Standard_D4s_v5 \
   --admin-username azureuser \
   --generate-ssh-keys \
   --vnet-name $DC1_VNET_NAME \
   --subnet oracle-subnet \
   --public-ip-address "" \
   --os-disk-size-gb 128
+
+# DC2 — Oracle DB VM (West US 2, Oracle subnet)
+az vm create \
+  --resource-group $RG \
+  --name apim-4-7-wus2-oracle \
+  --location westus2 \
+  --image Canonical:0001-com-ubuntu-server-jammy:22_04-lts-gen2:latest \
+  --size Standard_D2s_v5 \
+  --admin-username azureuser \
+  --generate-ssh-keys \
+  --vnet-name $DC2_VNET_NAME \
+  --subnet oracle-subnet \
+  --public-ip-address "" \
+  --os-disk-size-gb 128
 ```
+
+**VM sizing rationale:**
+- DC1 is sized larger (4 vCPU / 16 GB RAM) because it runs both the DB container and the OGG container.
+- DC2 is smaller (2 vCPU / 8 GB RAM) because it only runs a DB container.
+- 128 GB OS disk is enough for the stock images plus Docker volumes in a lab. If you want extra headroom for archive logs or image caches, attach and mount a data disk and point `/var/lib/docker` at it — that's purely optional and not covered here.
+
+> **Dedicated OGG hub (optional)**: If you prefer the OGG Free container on its own VM, provision a third small Ubuntu VM in `eastus` on `oracle-subnet` (same shape, 2 vCPU / 8 GB), run only the `docker run …/goldengate-free` command from Part 5 there, and move the NSG rule for TCP 443 from the DC1 VM to that VM. The DB containers in Parts 3–4 stay unchanged.
 
 ### 1.2 NSG Rules
 
-Azure NSGs allow all outbound traffic by default, so we only need inbound rules. Only the OGG hub needs 7809-7810 inbound; the two Oracle DB VMs only need 1521 inbound.
+Azure NSGs allow all outbound traffic by default, so we only need inbound rules.
 
 ```bash
 # Helper: look up the NSG attached to a VM's NIC
@@ -130,13 +123,13 @@ get_nsg() {
 }
 ```
 
-**DC1 Oracle DB VM — inbound 1521:**
+**DC1 VM — inbound 1521 (Oracle) + 443 (OGG Free web UI):**
 ```bash
-DC1_DB_NSG=$(get_nsg apim-4-7-eus1-oracle)
+DC1_NSG=$(get_nsg apim-4-7-eus1-oracle)
 
 az network nsg rule create \
   --resource-group $RG \
-  --nsg-name $DC1_DB_NSG \
+  --nsg-name $DC1_NSG \
   --name AllowOracle1521 \
   --priority 1010 \
   --direction Inbound \
@@ -144,1005 +137,511 @@ az network nsg rule create \
   --protocol Tcp \
   --destination-port-ranges 1521 \
   --source-address-prefixes VirtualNetwork
-```
-
-**DC2 Oracle DB VM — inbound 1521:**
-```bash
-DC2_DB_NSG=$(get_nsg apim-4-7-wus2-oracle)
 
 az network nsg rule create \
   --resource-group $RG \
-  --nsg-name $DC2_DB_NSG \
-  --name AllowOracle1521 \
-  --priority 1010 \
-  --direction Inbound \
-  --access Allow \
-  --protocol Tcp \
-  --destination-port-ranges 1521 \
-  --source-address-prefixes VirtualNetwork
-```
-
-**OGG hub VM — inbound 7809-7810:**
-```bash
-OGG_NSG=$(get_nsg apim-4-7-eus1-ogg)
-
-az network nsg rule create \
-  --resource-group $RG \
-  --nsg-name $OGG_NSG \
-  --name AllowOGG \
+  --nsg-name $DC1_NSG \
+  --name AllowOggUi443 \
   --priority 1020 \
   --direction Inbound \
   --access Allow \
   --protocol Tcp \
-  --destination-port-ranges 7809-7810 \
+  --destination-port-ranges 443 \
+  --source-address-prefixes VirtualNetwork
+```
+
+**DC2 VM — inbound 1521 only:**
+```bash
+DC2_NSG=$(get_nsg apim-4-7-wus2-oracle)
+
+az network nsg rule create \
+  --resource-group $RG \
+  --nsg-name $DC2_NSG \
+  --name AllowOracle1521 \
+  --priority 1010 \
+  --direction Inbound \
+  --access Allow \
+  --protocol Tcp \
+  --destination-port-ranges 1521 \
   --source-address-prefixes VirtualNetwork
 ```
 
 ### 1.3 VNet Peering
 
-If VNet peering is not already configured (from PostgreSQL/MSSQL setup):
+If the two VNets aren't already peered, run this once. Skip if `az network vnet peering list` already shows bidirectional `Connected` entries between the two VNets.
 
 ```bash
-# Get VNet IDs
 DC1_VNET_ID=$(az network vnet show -g $RG -n $DC1_VNET_NAME --query id -o tsv)
 DC2_VNET_ID=$(az network vnet show -g $RG -n $DC2_VNET_NAME --query id -o tsv)
 
-# DC1 → DC2
 az network vnet peering create \
   --resource-group $RG \
-  --name dc1-to-dc2 \
+  --name eus1-to-wus2 \
   --vnet-name $DC1_VNET_NAME \
   --remote-vnet $DC2_VNET_ID \
   --allow-vnet-access
 
-# DC2 → DC1
 az network vnet peering create \
   --resource-group $RG \
-  --name dc2-to-dc1 \
+  --name wus2-to-eus1 \
   --vnet-name $DC2_VNET_NAME \
   --remote-vnet $DC1_VNET_ID \
   --allow-vnet-access
 ```
 
-### 1.4 Mount Data Disk (OPTIONAL — run on BOTH Oracle DB VMs)
-
-> **Is this required?** **No** — for a lab running Oracle 23ai Free the OS disk is fine. Free Edition caps user data at 12 GB per PDB (~24 GB across `apim_db` + `shared_db`) and an Oracle Linux 8 marketplace image gives you a 64–128 GB OS disk, so the datafiles themselves comfortably fit. Use the data disk if you want IO isolation, headroom for archive logs, or the ability to detach/reattach the DB independently of the VM.
->
-> **The real risk on OS-disk-only** is not datafile size but **archive logs** (enabled in Step 3). They grow continuously and will hang the DB if `/opt/oracle` fills up. Mitigation options:
-> - Add a daily `rman` prune: `rman target / <<< "delete noprompt archivelog all completed before 'sysdate-1';"`
-> - Or set a tight `DB_RECOVERY_FILE_DEST_SIZE` so Oracle self-prunes the FRA
-> - Or skip archive log mode entirely for a throwaway lab (but then Extract can't replay historical changes if it falls behind)
->
-> If you're OK with those tradeoffs, **skip this section and go straight to Part 2**. Otherwise, continue below.
-
-The `--data-disk-sizes-gb 256` flag only attaches a raw LUN. Format and mount it **before installing Oracle** so `/opt/oracle` lives on the data disk instead of the OS disk.
-
-```bash
-# SSH into the Oracle DB VM as azureuser
-lsblk                                           # identify the unpartitioned 256 GB LUN (usually /dev/sdc)
-sudo mkfs.xfs /dev/sdc
-sudo mkdir -p /opt/oracle
-echo "/dev/sdc /opt/oracle xfs defaults,nofail 0 2" | sudo tee -a /etc/fstab
-sudo mount -a
-df -h /opt/oracle                               # confirm 256 GB mounted
-```
-
-> **Already installed Oracle onto the OS disk and want to move it?** Stop the DB, move the data dirs, and symlink back:
-> ```bash
-> sudo systemctl stop oracle-free-23ai
-> sudo mkfs.xfs /dev/sdc
-> sudo mkdir -p /u01
-> echo "/dev/sdc /u01 xfs defaults,nofail 0 2" | sudo tee -a /etc/fstab
-> sudo mount -a
-> sudo mv /opt/oracle/oradata /u01/oradata
-> sudo ln -s /u01/oradata /opt/oracle/oradata
-> sudo chown -R oracle:oinstall /u01/oradata
-> sudo systemctl start oracle-free-23ai
-> ```
-
 ---
 
-## Part 2: Oracle 23c Installation
+## Part 2: Install Docker and Pull Oracle Container Registry Images
 
-SSH into **both** Oracle DB VMs via the jump-box and install Oracle 23c.
+Run this on **both** VMs as `azureuser` (via the jump-box).
 
-### 2.1 Install Oracle 23c Free (RPM-based)
-
-```bash
-# SSH into the Oracle VM via jump-box
-ssh azureuser@<oracle-vm-private-ip>
-
-# Install Oracle 23c Free (Oracle Linux)
-sudo dnf install -y oracle-database-preinstall-23ai
-sudo dnf install -y https://download.oracle.com/otn-pub/otn_software/db-free/oracle-database-free-23ai-1.0-1.el8.x86_64.rpm
-
-# Configure the database (creates FREE CDB + FREEPDB1)
-sudo /etc/init.d/oracle-free-23ai configure
-
-# You will be prompted to set a password for SYS, SYSTEM, and PDBADMIN
-# Use a strong password and note it down
-
-# Set environment variables
-echo 'export ORACLE_HOME=/opt/oracle/product/23ai/dbhomeFree' >> ~/.bashrc
-echo 'export ORACLE_SID=FREE' >> ~/.bashrc
-echo 'export PATH=$ORACLE_HOME/bin:$PATH' >> ~/.bashrc
-echo 'export LD_LIBRARY_PATH=$ORACLE_HOME/lib' >> ~/.bashrc
-source ~/.bashrc
-```
-
-**Grant azureuser the `dba` and `oinstall` group membership** so you can run `sqlplus / as sysdba`, `lsnrctl`, and `ggsci` directly without `sudo su - oracle`:
+### 2.1 Install Docker
 
 ```bash
-sudo usermod -aG dba,oinstall azureuser
-```
+sudo apt-get update
+sudo apt-get install -y docker.io
+sudo systemctl enable --now docker
 
-Group membership only takes effect in a **new login session**. The simplest and most reliable way is to log out and SSH back in:
+# Allow azureuser to run docker without sudo
+sudo usermod -aG docker azureuser
 
-```bash
+# Log out and reconnect so the new group membership takes effect
 exit
-ssh azureuser@<oracle-vm-private-ip>
 ```
 
-(Don't use `su -l azureuser` — `su` always prompts for the target user's password, and `azureuser` has no password when you authenticated with an SSH key. If you really don't want to drop the session, `exec sudo -iu azureuser` also works because `sudo` authorises via sudoers, not a password.)
-
-After reconnecting, verify:
+Reconnect and verify:
 
 ```bash
-id                          # should list dba and oinstall
-sqlplus / as sysdba <<'SQL'
-SELECT name, open_mode FROM v$database;
+docker version
+docker info | grep -i storage
+```
+
+### 2.2 Accept Oracle Container Registry Terms (one-time, manual)
+
+Oracle images require an Oracle SSO account and explicit acceptance of each image's license in a browser. There is no CLI workaround for this step — it has to be done once per Oracle account.
+
+1. Open <https://container-registry.oracle.com> in a browser and sign in with your Oracle SSO account.
+2. Browse to **Database → free** and click **Continue** to accept the license terms.
+3. Browse to **GoldenGate → goldengate-free** and click **Continue** to accept the license terms.
+
+### 2.3 Log in and pull images
+
+On **both** VMs:
+
+```bash
+docker login container-registry.oracle.com
+# Username: <your-oracle-sso-email>
+# Password: <your-oracle-sso-password>
+
+docker pull container-registry.oracle.com/database/free:latest
+```
+
+On **DC1 only** (where the OGG hub container will run):
+
+```bash
+docker pull container-registry.oracle.com/goldengate/goldengate-free:latest
+```
+
+The DB image is ~9 GB and the OGG image is ~2 GB, so the pulls take several minutes.
+
+---
+
+## Part 3: Start the Oracle DB Containers
+
+Run this on **both** VMs. The container exposes a single-instance Oracle 23ai Free CDB named `FREE` with a default PDB named `FREEPDB1`. We're going to ignore `FREEPDB1` and create `apim_db` and `shared_db` PDBs on top in Part 4.
+
+### 3.1 Start the container
+
+```bash
+docker volume create oracle-db-data
+
+docker run -d \
+  --name oracle-db \
+  --network host \
+  --restart unless-stopped \
+  -e ORACLE_PWD=Apim@123 \
+  -v oracle-db-data:/opt/oracle/oradata \
+  container-registry.oracle.com/database/free:latest
+```
+
+Notes on the flags:
+- `--network host` binds the container directly to the VM's private IP on port 1521. This keeps the OGG Free container (on DC1) reachable to both DBs over the peered VNet without Docker bridge gymnastics.
+- `-e ORACLE_PWD=Apim@123` sets the SYS, SYSTEM, and PDBADMIN passwords in one shot.
+- The named volume `oracle-db-data` persists datafiles across container restarts.
+
+### 3.2 Wait for the database to be ready
+
+First-boot is slow (5–10 minutes) because Oracle is creating the CDB and PDB datafiles inside the named volume.
+
+```bash
+docker logs -f oracle-db
+```
+
+Wait until you see:
+
+```
+#########################
+DATABASE IS READY TO USE!
+#########################
+```
+
+Then Ctrl-C out of the `logs -f`. On subsequent container restarts the database comes up in under a minute.
+
+### 3.3 Connect to the CDB as SYSDBA
+
+From the VM host:
+
+```bash
+# Via OS-auth inside the container (simplest)
+docker exec -it oracle-db sqlplus / as sysdba
+
+# Or via listener auth
+docker exec -it oracle-db sqlplus sys/Apim@123@FREE as sysdba
+```
+
+Sanity check:
+
+```sql
+SHOW CON_NAME;                      -- expect CDB$ROOT
+SELECT NAME, OPEN_MODE FROM V$PDBS; -- expect PDB$SEED + FREEPDB1
 EXIT;
-SQL
-```
-
-> **Note:** If using Oracle 23c Enterprise instead of Free, follow Oracle's standard installation guide and create a CDB/PDB architecture.
-
-### 2.1b Open firewalld and clone the scripts repo
-
-Oracle Linux 8/9 ships with firewalld enabled. Even though the NSG is open, firewalld still blocks 1521:
-
-```bash
-sudo firewall-cmd --permanent --add-port=1521/tcp
-sudo firewall-cmd --reload
-sudo firewall-cmd --list-ports                  # should include 1521/tcp
-```
-
-Clone the repo onto the VM so the DC-specific SQL scripts in Step 7 are reachable locally:
-
-```bash
-sudo dnf install -y git
-cd ~
-git clone https://github.com/wso2/helm-apim.git helm-apim-4.7
-# Scripts are now at:
-#   ~/helm-apim-4.7/dbscripts/dc1/Oracle/...
-#   ~/helm-apim-4.7/dbscripts/dc2/Oracle/...
-```
-
-### 2.2 Configure Oracle Listener (REQUIRED for cross-region access)
-
-The default 23ai Free listener binds to `localhost` only, which breaks all cross-region connectivity. You **must** reconfigure it to bind to `0.0.0.0:1521` on both DB VMs.
-
-```bash
-# Confirm current endpoint (likely shows localhost or 127.0.0.1)
-lsnrctl status
-```
-
-Rewrite `$ORACLE_HOME/network/admin/listener.ora` to bind to all interfaces:
-
-```bash
-cat > $ORACLE_HOME/network/admin/listener.ora <<'EOF'
-LISTENER =
-  (DESCRIPTION_LIST =
-    (DESCRIPTION =
-      (ADDRESS = (PROTOCOL = IPC)(KEY = EXTPROC1521))
-      (ADDRESS = (PROTOCOL = TCP)(HOST = 0.0.0.0)(PORT = 1521))
-    )
-  )
-EOF
-
-lsnrctl stop
-lsnrctl start
-```
-
-Tell the CDB to register its services with the new listener endpoint:
-
-```bash
-sqlplus / as sysdba <<'SQL'
-ALTER SYSTEM SET LOCAL_LISTENER='(ADDRESS=(PROTOCOL=TCP)(HOST=0.0.0.0)(PORT=1521))' SCOPE=BOTH;
-ALTER SYSTEM REGISTER;
-EXIT;
-SQL
-
-# Verify the listener now reports TCP on 1521 and lists the FREE CDB service
-lsnrctl services
-```
-
-After Step 1 creates the PDBs, re-run `lsnrctl services` — you should see `apim_db` and `shared_db` service names appear alongside `FREE`.
-
-### 2.3 Configure tnsnames.ora (on both DB VMs)
-
-Add entries for both databases in `$ORACLE_HOME/network/admin/tnsnames.ora`:
-
-```
-DC1_APIM =
-  (DESCRIPTION =
-    (ADDRESS = (PROTOCOL = TCP)(HOST = 10.2.4.4)(PORT = 1521))
-    (CONNECT_DATA = (SERVICE_NAME = apim_db)))
-
-DC1_SHARED =
-  (DESCRIPTION =
-    (ADDRESS = (PROTOCOL = TCP)(HOST = 10.2.4.4)(PORT = 1521))
-    (CONNECT_DATA = (SERVICE_NAME = shared_db)))
-
-DC2_APIM =
-  (DESCRIPTION =
-    (ADDRESS = (PROTOCOL = TCP)(HOST = 10.1.4.4)(PORT = 1521))
-    (CONNECT_DATA = (SERVICE_NAME = apim_db)))
-
-DC2_SHARED =
-  (DESCRIPTION =
-    (ADDRESS = (PROTOCOL = TCP)(HOST = 10.1.4.4)(PORT = 1521))
-    (CONNECT_DATA = (SERVICE_NAME = shared_db)))
-```
-
-### 2.4 Test Cross-Region Connectivity
-
-From the GoldenGate hub VM (or either DB VM), verify:
-
-```bash
-# Test connectivity to DC1
-tnsping DC1_APIM
-
-# Test connectivity to DC2
-tnsping DC2_APIM
-
-# Or use sqlplus
-sqlplus apimadmineast/{password}@DC1_APIM
-sqlplus apimadminwest/{password}@DC2_APIM
 ```
 
 ---
 
-## Part 3: Database Setup
+## Part 4: Create PDBs, Enable GoldenGate Prerequisites, Load APIM Schemas
 
-### Step 1: Create Pluggable Databases
+### 4.1 Create PDBs and the `apimadmin` app user
 
-> **Passwords**: Replace `{your-password}` and `{ogg-password}` below with a quoted string that contains only letters, digits, and standard punctuation. Oracle passwords cannot contain `{`, `}`, or unquoted whitespace. Example: `"Str0ngP@ss1"`. Use the same substitution in every SQL block below.
+Run this **on both DC1 and DC2** (identical commands). The PDB names and schema owner are unified across DCs so the Helm values files and the GG Free Active-Active recipe don't need any schema-rename mapping.
 
-On **DC1** Oracle VM:
+```bash
+docker exec -it oracle-db sqlplus / as sysdba
+```
+
 ```sql
--- Connect as SYSDBA
-sqlplus / as sysdba
-
--- Create PDBs for APIM
+-- Create the two PDBs with admin user PDBADMIN (auto-created)
 CREATE PLUGGABLE DATABASE apim_db
-  ADMIN USER apimadmineast IDENTIFIED BY "{your-password}"
-  FILE_NAME_CONVERT = ('/opt/oracle/oradata/FREE/pdbseed/', '/opt/oracle/oradata/FREE/apim_db/');
+  ADMIN USER pdbadmin IDENTIFIED BY "Apim@123"
+  FILE_NAME_CONVERT = ('pdbseed', 'apim_db');
 
 CREATE PLUGGABLE DATABASE shared_db
-  ADMIN USER apimadmineast IDENTIFIED BY "{your-password}"
-  FILE_NAME_CONVERT = ('/opt/oracle/oradata/FREE/pdbseed/', '/opt/oracle/oradata/FREE/shared_db/');
+  ADMIN USER pdbadmin IDENTIFIED BY "Apim@123"
+  FILE_NAME_CONVERT = ('pdbseed', 'shared_db');
 
--- Open PDBs
-ALTER PLUGGABLE DATABASE apim_db OPEN;
+ALTER PLUGGABLE DATABASE apim_db   OPEN;
 ALTER PLUGGABLE DATABASE shared_db OPEN;
-
--- Auto-open on restart
-ALTER PLUGGABLE DATABASE apim_db SAVE STATE;
+ALTER PLUGGABLE DATABASE apim_db   SAVE STATE;
 ALTER PLUGGABLE DATABASE shared_db SAVE STATE;
+
+SELECT NAME, OPEN_MODE FROM V$PDBS;   -- expect APIM_DB + SHARED_DB OPEN READ WRITE
 ```
 
-On **DC2** Oracle VM:
-```sql
-sqlplus / as sysdba
-
-CREATE PLUGGABLE DATABASE apim_db
-  ADMIN USER apimadminwest IDENTIFIED BY "{your-password}"
-  FILE_NAME_CONVERT = ('/opt/oracle/oradata/FREE/pdbseed/', '/opt/oracle/oradata/FREE/apim_db/');
-
-CREATE PLUGGABLE DATABASE shared_db
-  ADMIN USER apimadminwest IDENTIFIED BY "{your-password}"
-  FILE_NAME_CONVERT = ('/opt/oracle/oradata/FREE/pdbseed/', '/opt/oracle/oradata/FREE/shared_db/');
-
-ALTER PLUGGABLE DATABASE apim_db OPEN;
-ALTER PLUGGABLE DATABASE shared_db OPEN;
-ALTER PLUGGABLE DATABASE apim_db SAVE STATE;
-ALTER PLUGGABLE DATABASE shared_db SAVE STATE;
-```
-
-### Step 2: Grant User Privileges
-
-On **DC1** Oracle VM:
+Create the APIM schema owner (`apimadmin`) in each PDB and grant it enough privileges to run the WSO2 schema scripts:
 
 ```sql
-sqlplus / as sysdba
-
--- Connect to apim_db PDB
 ALTER SESSION SET CONTAINER = apim_db;
-GRANT CONNECT, RESOURCE, DBA TO apimadmineast;
-GRANT UNLIMITED TABLESPACE TO apimadmineast;
+CREATE USER apimadmin IDENTIFIED BY "Apim@123";
+GRANT CONNECT, RESOURCE, DBA, UNLIMITED TABLESPACE TO apimadmin;
 
--- Connect to shared_db PDB
 ALTER SESSION SET CONTAINER = shared_db;
-GRANT CONNECT, RESOURCE, DBA TO apimadmineast;
-GRANT UNLIMITED TABLESPACE TO apimadmineast;
+CREATE USER apimadmin IDENTIFIED BY "Apim@123";
+GRANT CONNECT, RESOURCE, DBA, UNLIMITED TABLESPACE TO apimadmin;
+
+ALTER SESSION SET CONTAINER = CDB$ROOT;
 ```
 
-On **DC2** Oracle VM:
+> **Why `DBA` on an app user?** This is a lab shortcut — it lets the WSO2 schema scripts create objects without chasing individual system privileges. For production, grant the narrower privilege set documented in the WSO2 installation guide.
+
+### 4.2 Enable archive log mode, supplemental logging, and GoldenGate replication
+
+These are CDB-level settings required by GoldenGate. Run **on both DC1 and DC2**, still inside `sqlplus / as sysdba`:
 
 ```sql
-sqlplus / as sysdba
-
--- Connect to apim_db PDB
-ALTER SESSION SET CONTAINER = apim_db;
-GRANT CONNECT, RESOURCE, DBA TO apimadminwest;
-GRANT UNLIMITED TABLESPACE TO apimadminwest;
-
--- Connect to shared_db PDB
-ALTER SESSION SET CONTAINER = shared_db;
-GRANT CONNECT, RESOURCE, DBA TO apimadminwest;
-GRANT UNLIMITED TABLESPACE TO apimadminwest;
-```
-
-### Step 3: Enable Archive Log Mode
-
-On **both** DB VMs (required for GoldenGate Extract):
-
-```sql
-sqlplus / as sysdba
-
--- Check current mode
-ARCHIVE LOG LIST;
-
--- If not in archive log mode:
+-- Enable archive log mode (required for Extract to mine redo)
 SHUTDOWN IMMEDIATE;
 STARTUP MOUNT;
 ALTER DATABASE ARCHIVELOG;
 ALTER DATABASE OPEN;
+ALTER PLUGGABLE DATABASE ALL OPEN;
 
--- Verify
-ARCHIVE LOG LIST;
-```
+-- Force logging so unlogged operations still replicate
+ALTER DATABASE FORCE LOGGING;
 
-### Step 4: Enable Supplemental Logging
-
-On **both** DB VMs:
-
-```sql
-sqlplus / as sysdba
-
--- Enable minimal supplemental logging at CDB level
+-- Minimum supplemental logging at the CDB level
 ALTER DATABASE ADD SUPPLEMENTAL LOG DATA;
 
--- Enable supplemental logging for all columns in each PDB
-ALTER SESSION SET CONTAINER = apim_db;
-ALTER DATABASE ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS;
+-- Enable GoldenGate replication for the instance
+ALTER SYSTEM SET ENABLE_GOLDENGATE_REPLICATION = TRUE SCOPE=BOTH;
 
-ALTER SESSION SET CONTAINER = shared_db;
-ALTER DATABASE ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS;
+-- Verify
+SELECT LOG_MODE, FORCE_LOGGING, SUPPLEMENTAL_LOG_DATA_MIN FROM V$DATABASE;
+SHOW PARAMETER ENABLE_GOLDENGATE_REPLICATION;
+EXIT;
 ```
 
-### Step 5: Enable GoldenGate Replication
+Expected: `LOG_MODE = ARCHIVELOG`, `FORCE_LOGGING = YES`, `SUPPLEMENTAL_LOG_DATA_MIN = YES`, `enable_goldengate_replication = TRUE`.
 
-On **both** DB VMs:
+### 4.3 Load the APIM schemas from the pre-customized DC packs
 
-```sql
-sqlplus / as sysdba
+The `dbscripts/dc1/Oracle/` and `dbscripts/dc2/Oracle/` directories already contain DC-customized copies of the WSO2 schema scripts — `DCID` defaults and sequence offsets (`START WITH 1 INCREMENT BY 2` on DC1, `START WITH 2 INCREMENT BY 2` on DC2) are already applied. **Do not re-edit them.**
 
-ALTER SYSTEM SET enable_goldengate_replication = TRUE SCOPE=BOTH;
-```
+On each VM, clone the repo and copy the correct per-DC pack into its DB container.
 
-### Step 6: Create GoldenGate Admin User
-
-On **both** DB VMs, create a common user for GoldenGate in the CDB:
-
-```sql
-sqlplus / as sysdba
-
--- Create GoldenGate admin user (common user in CDB)
-CREATE USER C##GGADMIN IDENTIFIED BY "{ogg-password}";
-GRANT DBA TO C##GGADMIN CONTAINER=ALL;
-GRANT CONNECT, RESOURCE TO C##GGADMIN CONTAINER=ALL;
-GRANT ALTER SYSTEM TO C##GGADMIN CONTAINER=ALL;
-GRANT SELECT ANY DICTIONARY TO C##GGADMIN CONTAINER=ALL;
-GRANT SELECT ANY TABLE TO C##GGADMIN CONTAINER=ALL;
-GRANT INSERT ANY TABLE TO C##GGADMIN CONTAINER=ALL;
-GRANT UPDATE ANY TABLE TO C##GGADMIN CONTAINER=ALL;
-GRANT DELETE ANY TABLE TO C##GGADMIN CONTAINER=ALL;
-
--- GoldenGate-specific privileges
-EXEC DBMS_GOLDENGATE_AUTH.GRANT_ADMIN_PRIVILEGE('C##GGADMIN', CONTAINER=>'ALL');
-```
-
-### Step 7: Run DC-Specific Table and Sequence Scripts
-
-**DC1** (connect via sqlplus or SQLcl from jump-box):
+**DC1 VM:**
 
 ```bash
-# shared_db — tables and sequences
-sqlplus apimadmineast/{password}@DC1_SHARED @dbscripts/dc1/Oracle/tables_23c.sql
-sqlplus apimadmineast/{password}@DC1_SHARED @dbscripts/dc1/Oracle/sequences_23c.sql
+cd ~
+git clone <this-repo-url> helm-apim-4.7
+cd helm-apim-4.7
 
-# apim_db — tables and sequences
-sqlplus apimadmineast/{password}@DC1_APIM @dbscripts/dc1/Oracle/apimgt/tables_23c.sql
-sqlplus apimadmineast/{password}@DC1_APIM @dbscripts/dc1/Oracle/apimgt/sequences_23c.sql
+# apim_db scripts
+docker cp dbscripts/dc1/Oracle/apimgt/tables_23c.sql    oracle-db:/tmp/apim_tables.sql
+docker cp dbscripts/dc1/Oracle/apimgt/sequences_23c.sql oracle-db:/tmp/apim_sequences.sql
+
+# shared_db scripts
+docker cp dbscripts/dc1/Oracle/tables_23c.sql           oracle-db:/tmp/shared_tables.sql
+docker cp dbscripts/dc1/Oracle/sequences_23c.sql        oracle-db:/tmp/shared_sequences.sql
+
+# Run them
+docker exec -i oracle-db sqlplus apimadmin/Apim@123@localhost:1521/apim_db   @/tmp/apim_tables.sql
+docker exec -i oracle-db sqlplus apimadmin/Apim@123@localhost:1521/apim_db   @/tmp/apim_sequences.sql
+docker exec -i oracle-db sqlplus apimadmin/Apim@123@localhost:1521/shared_db @/tmp/shared_tables.sql
+docker exec -i oracle-db sqlplus apimadmin/Apim@123@localhost:1521/shared_db @/tmp/shared_sequences.sql
 ```
 
-**DC2:**
+**DC2 VM:** same commands, but replace `dc1/Oracle` with `dc2/Oracle` in all four `docker cp` lines.
+
+### 4.4 Verify the schemas loaded
+
+On either VM:
 
 ```bash
-# shared_db — tables and sequences
-sqlplus apimadminwest/{password}@DC2_SHARED @dbscripts/dc2/Oracle/tables_23c.sql
-sqlplus apimadminwest/{password}@DC2_SHARED @dbscripts/dc2/Oracle/sequences_23c.sql
-
-# apim_db — tables and sequences
-sqlplus apimadminwest/{password}@DC2_APIM @dbscripts/dc2/Oracle/apimgt/tables_23c.sql
-sqlplus apimadminwest/{password}@DC2_APIM @dbscripts/dc2/Oracle/apimgt/sequences_23c.sql
+docker exec -it oracle-db sqlplus apimadmin/Apim@123@localhost:1521/apim_db
 ```
 
-**What the DC-specific scripts change:**
+```sql
+SELECT COUNT(*) FROM USER_TABLES;      -- expect a nonzero count
+SELECT COUNT(*) FROM USER_SEQUENCES;   -- expect a nonzero count
+SELECT DATA_DEFAULT FROM USER_TAB_COLUMNS
+ WHERE TABLE_NAME='IDN_OAUTH2_ACCESS_TOKEN' AND COLUMN_NAME='DCID';
+-- expect 'DC1' on DC1, 'DC2' on DC2
+EXIT;
+```
 
-| | DC1 | DC2 |
-|--|-----|-----|
-| Sequences | `START WITH 1 INCREMENT BY 2` | `START WITH 2 INCREMENT BY 2` |
-| DCID default (IDN_OAUTH2_ACCESS_TOKEN) | `'DC1'` | `'DC2'` |
+### 4.5 Sanity-check DB-to-DB reachability
 
-This ensures DC1 generates IDs 1,3,5,7... and DC2 generates 2,4,6,8... — no collisions during replication.
+From the **DC1** VM, confirm it can reach the DC2 DB over the peered VNet (OGG on DC1 will need this):
+
+```bash
+nc -zv 10.1.4.4 1521
+# expect: Connection to 10.1.4.4 1521 port [tcp/*] succeeded!
+```
+
+And from the **DC2** VM, confirm reachability back:
+
+```bash
+nc -zv 10.2.4.4 1521
+# expect: Connection to 10.2.4.4 1521 port [tcp/*] succeeded!
+```
+
+If either `nc` call fails, re-check the NSG rules in §1.2 and the VNet peering in §1.3 before continuing.
 
 ---
 
-## Part 4: Oracle GoldenGate Setup
+## Part 5: Start the OGG Free Container on DC1
 
-### Step 7.5: Prepare OGG Hub VM (Instant Client + firewalld)
+Run this on the **DC1 VM only**.
 
-Oracle Linux 8.x does not ship Instant Client by default. OGG 23ai needs Oracle client libraries to connect to the remote CDBs, plus a `TNS_ADMIN` directory for `tnsnames.ora`, plus the OS firewall opened for the Manager/collector ports.
-
-SSH into the OGG hub VM as `azureuser`:
+### 5.1 Start the container
 
 ```bash
-ssh azureuser@<ogg-hub-private-ip>
+docker volume create ogg-hub-data
 
-# Install Oracle Instant Client 23ai (Basic + SQL*Plus)
-# If the Oracle Linux repos don't carry these, install from Oracle's RPM URLs:
-sudo dnf install -y \
-  https://download.oracle.com/otn_software/linux/instantclient/2360000/oracle-instantclient-basic-23.6.0.24.10-1.el8.x86_64.rpm \
-  https://download.oracle.com/otn_software/linux/instantclient/2360000/oracle-instantclient-sqlplus-23.6.0.24.10-1.el8.x86_64.rpm
-
-# Create TNS_ADMIN directory owned by azureuser
-sudo mkdir -p /etc/oracle
-sudo chown azureuser:azureuser /etc/oracle
-
-# Export client env vars so sqlplus/ggsci find libclntsh.so and tnsnames.ora
-cat >> ~/.bashrc <<'EOF'
-export TNS_ADMIN=/etc/oracle
-export LD_LIBRARY_PATH=/usr/lib/oracle/23/client64/lib:$LD_LIBRARY_PATH
-export PATH=/usr/lib/oracle/23/client64/bin:$PATH
-EOF
-source ~/.bashrc
-
-# Verify client is wired up
-sqlplus -V
-
-# Open GoldenGate Manager + collector ports in firewalld
-sudo firewall-cmd --permanent --add-port=7809-7810/tcp
-sudo firewall-cmd --reload
+docker run -d \
+  --name ogg-hub \
+  --network host \
+  --restart unless-stopped \
+  -v ogg-hub-data:/u01 \
+  container-registry.oracle.com/goldengate/goldengate-free:latest
 ```
 
-### Step 8: Install GoldenGate on Hub VM
+### 5.2 Get the initial admin password
 
-SSH into the GoldenGate hub VM:
+The container generates a random password for the web UI admin user on first boot and prints it into the startup logs:
 
 ```bash
-ssh azureuser@<ogg-hub-private-ip>
-
-# Download Oracle GoldenGate 23ai for Oracle (from Oracle website or OTN)
-# https://www.oracle.com/middleware/technologies/goldengate-downloads.html
-# Transfer the zip to the VM
-
-# Create OGG directories
-sudo mkdir -p /opt/ogg
-sudo chown azureuser:azureuser /opt/ogg
-
-# Unzip GoldenGate
-unzip fbo_ggs_Linux_x64_Oracle_shiphome.zip -d /opt/ogg
-
-# Run the installer (or use the responseFile for silent install)
-cd /opt/ogg/fbo_ggs_Linux_x64_Oracle_shiphome/Disk1
-./runInstaller -silent -responseFile /opt/ogg/response/oggcore.rsp
-
-# Or for GoldenGate Free (23ai):
-# Download from: https://www.oracle.com/middleware/technologies/goldengate-free-downloads.html
-# rpm -i oracle-goldengate-free*.rpm
+docker logs ogg-hub 2>&1 | grep -i "password"
 ```
 
-Set environment:
-```bash
-echo 'export OGG_HOME=/opt/ogg/oggcore' >> ~/.bashrc
-echo 'export PATH=$OGG_HOME:$PATH' >> ~/.bashrc
-echo 'export LD_LIBRARY_PATH=$ORACLE_HOME/lib:$OGG_HOME/lib' >> ~/.bashrc
-source ~/.bashrc
-```
+Copy the printed password — you'll need it for the first login.
 
-### Step 9: Configure tnsnames.ora on Hub VM
+### 5.3 Reach the web UI via SSH tunnel
 
-Write the TNS entries to `$TNS_ADMIN/tnsnames.ora` (i.e. `/etc/oracle/tnsnames.ora`, the directory created in Step 7.5):
+The OGG Free web UI listens on TCP 443 inside the container (and, because of `--network host`, directly on the VM's private IP `10.2.4.4`). The VM has no public IP, so tunnel through the jump-box from your laptop:
 
 ```bash
-cat > /etc/oracle/tnsnames.ora <<'EOF'
-DC1_APIM =
-  (DESCRIPTION =
-    (ADDRESS = (PROTOCOL = TCP)(HOST = 10.2.4.4)(PORT = 1521))
-    (CONNECT_DATA = (SERVICE_NAME = apim_db)))
-
-DC1_SHARED =
-  (DESCRIPTION =
-    (ADDRESS = (PROTOCOL = TCP)(HOST = 10.2.4.4)(PORT = 1521))
-    (CONNECT_DATA = (SERVICE_NAME = shared_db)))
-
-DC2_APIM =
-  (DESCRIPTION =
-    (ADDRESS = (PROTOCOL = TCP)(HOST = 10.1.4.4)(PORT = 1521))
-    (CONNECT_DATA = (SERVICE_NAME = apim_db)))
-
-DC2_SHARED =
-  (DESCRIPTION =
-    (ADDRESS = (PROTOCOL = TCP)(HOST = 10.1.4.4)(PORT = 1521))
-    (CONNECT_DATA = (SERVICE_NAME = shared_db)))
-EOF
+# From your laptop
+ssh -L 8443:10.2.4.4:443 azureuser@<jump-box-public-ip>
 ```
 
-Verify connectivity (tnsping ships with Instant Client Tools; if not installed, use `sqlplus C##GGADMIN/{ogg-password}@DC1_APIM` instead):
-```bash
-tnsping DC1_APIM
-tnsping DC2_APIM
-tnsping DC1_SHARED
-tnsping DC2_SHARED
-```
-
-### Step 10: Create GoldenGate Subdirectories
-
-```bash
-cd $OGG_HOME
-./ggsci
-
-# Inside GGSCI:
-GGSCI> CREATE SUBDIRS
-```
-
-This creates `dirdat/`, `dirprm/`, `dirchk/`, `dirrpt/`, `dirtmp/` etc.
-
-### Step 11: Configure GoldenGate Manager
-
-Create the Manager parameter file:
-
-```bash
-GGSCI> EDIT PARAMS MGR
-```
-
-Add:
-```
-PORT 7809
-DYNAMICPORTLIST 7810-7820
-AUTORESTART EXTRACT *, RETRIES 3, WAITMINUTES 5
-PURGEOLDEXTRACTS ./dirdat/*, USECHECKPOINTS, MINKEEPDAYS 3
-```
-
-Start the Manager:
-```bash
-GGSCI> START MGR
-GGSCI> INFO MGR
-```
-
-### Step 12: Store Database Credentials
-
-```bash
-# First-time bootstrap of the credential store (creates dircrd/cwallet.sso)
-GGSCI> ADD CREDENTIALSTORE
-
-# Add credentials for all four databases
-GGSCI> ALTER CREDENTIALSTORE ADD USER C##GGADMIN@DC1_APIM PASSWORD {ogg-password} ALIAS dc1_apim
-GGSCI> ALTER CREDENTIALSTORE ADD USER C##GGADMIN@DC1_SHARED PASSWORD {ogg-password} ALIAS dc1_shared
-GGSCI> ALTER CREDENTIALSTORE ADD USER C##GGADMIN@DC2_APIM PASSWORD {ogg-password} ALIAS dc2_apim
-GGSCI> ALTER CREDENTIALSTORE ADD USER C##GGADMIN@DC2_SHARED PASSWORD {ogg-password} ALIAS dc2_shared
-
-# Verify
-GGSCI> INFO CREDENTIALSTORE
-```
-
-### Step 12.5: Enable Schema-level Supplemental Logging (SCHEMATRANDATA)
-
-Integrated Extract requires `ADD SCHEMATRANDATA` on every PDB schema it will capture from. This is a GGSCI command, so it has to run *after* the credential store exists (Step 12) and *before* any Extract is registered (Step 13).
-
-```bash
-# DC1 schemas (apimadmineast)
-GGSCI> DBLOGIN USERIDALIAS dc1_apim
-GGSCI> ADD SCHEMATRANDATA apim_db.apimadmineast ALLCOLS
-GGSCI> DBLOGIN USERIDALIAS dc1_shared
-GGSCI> ADD SCHEMATRANDATA shared_db.apimadmineast ALLCOLS
-
-# DC2 schemas (apimadminwest)
-GGSCI> DBLOGIN USERIDALIAS dc2_apim
-GGSCI> ADD SCHEMATRANDATA apim_db.apimadminwest ALLCOLS
-GGSCI> DBLOGIN USERIDALIAS dc2_shared
-GGSCI> ADD SCHEMATRANDATA shared_db.apimadminwest ALLCOLS
-
-# Verify at least one per DC reports "prepared" and "allcols"
-GGSCI> INFO SCHEMATRANDATA apim_db.apimadmineast
-GGSCI> INFO SCHEMATRANDATA apim_db.apimadminwest
-```
-
-### Step 13: Configure Extract Processes
-
-> **Pre-check:** `INFO SCHEMATRANDATA` must report the schema as "prepared" for every PDB you are about to register. If it doesn't, go back to Step 12.5 — registering an Extract against a schema without SCHEMATRANDATA will silently miss row changes.
-
-We need 4 Extract processes (one per database):
-
-#### Extract: DC1 apim_db
-
-```bash
-GGSCI> EDIT PARAMS EXT1A
-```
-
-```
-EXTRACT EXT1A
-USERIDALIAS dc1_apim
-EXTTRAIL ./dirdat/a1
-SOURCECATALOG apim_db
-
--- Exclude replicated rows (loop prevention)
-TRANLOGOPTIONS EXCLUDETAG 00
-
-TABLE apimadmineast.*;
-```
-
-#### Extract: DC1 shared_db
-
-```bash
-GGSCI> EDIT PARAMS EXT1S
-```
-
-```
-EXTRACT EXT1S
-USERIDALIAS dc1_shared
-EXTTRAIL ./dirdat/s1
-SOURCECATALOG shared_db
-
-TRANLOGOPTIONS EXCLUDETAG 00
-
-TABLE apimadmineast.*;
-```
-
-#### Extract: DC2 apim_db
-
-```bash
-GGSCI> EDIT PARAMS EXT2A
-```
-
-```
-EXTRACT EXT2A
-USERIDALIAS dc2_apim
-EXTTRAIL ./dirdat/a2
-SOURCECATALOG apim_db
-
-TRANLOGOPTIONS EXCLUDETAG 00
-
-TABLE apimadminwest.*;
-```
-
-#### Extract: DC2 shared_db
-
-```bash
-GGSCI> EDIT PARAMS EXT2S
-```
-
-```
-EXTRACT EXT2S
-USERIDALIAS dc2_shared
-EXTTRAIL ./dirdat/s2
-SOURCECATALOG shared_db
-
-TRANLOGOPTIONS EXCLUDETAG 00
-
-TABLE apimadminwest.*;
-```
-
-Register and add the Extracts:
-
-```bash
-# Register Extracts with the databases
-GGSCI> DBLOGIN USERIDALIAS dc1_apim
-GGSCI> REGISTER EXTRACT EXT1A DATABASE CONTAINER (apim_db)
-GGSCI> ADD EXTRACT EXT1A, INTEGRATED TRANLOG, BEGIN NOW
-GGSCI> ADD EXTTRAIL ./dirdat/a1, EXTRACT EXT1A
-
-GGSCI> DBLOGIN USERIDALIAS dc1_shared
-GGSCI> REGISTER EXTRACT EXT1S DATABASE CONTAINER (shared_db)
-GGSCI> ADD EXTRACT EXT1S, INTEGRATED TRANLOG, BEGIN NOW
-GGSCI> ADD EXTTRAIL ./dirdat/s1, EXTRACT EXT1S
-
-GGSCI> DBLOGIN USERIDALIAS dc2_apim
-GGSCI> REGISTER EXTRACT EXT2A DATABASE CONTAINER (apim_db)
-GGSCI> ADD EXTRACT EXT2A, INTEGRATED TRANLOG, BEGIN NOW
-GGSCI> ADD EXTTRAIL ./dirdat/a2, EXTRACT EXT2A
-
-GGSCI> DBLOGIN USERIDALIAS dc2_shared
-GGSCI> REGISTER EXTRACT EXT2S DATABASE CONTAINER (shared_db)
-GGSCI> ADD EXTRACT EXT2S, INTEGRATED TRANLOG, BEGIN NOW
-GGSCI> ADD EXTTRAIL ./dirdat/s2, EXTRACT EXT2S
-```
-
-### Step 14: Configure Replicat Processes
-
-We need 4 Replicat processes (apply DC1 changes to DC2 and vice versa):
-
-#### Replicat: DC1→DC2 apim_db
-
-```bash
-GGSCI> EDIT PARAMS REP2A
-```
-
-```
-REPLICAT REP2A
-USERIDALIAS dc2_apim
-ASSUMETARGETDEFS
-
--- Tag replicated rows so Extract ignores them (loop prevention)
-DBOPTIONS SETTAG 00
-
--- Conflict resolution: Last Writer Wins
-MAP apimadmineast.*, TARGET apimadminwest.*, COMPARECOLS (ON UPDATE ALL, ON DELETE ALL), RESOLVECONFLICT (UPDATEROWEXISTS, (DEFAULT, USELATESTVERSION)), RESOLVECONFLICT (INSERTROWEXISTS, (DEFAULT, USELATESTVERSION)), RESOLVECONFLICT (DELETEROWMISSING, (DEFAULT, DISCARD));
-```
-
-#### Replicat: DC1→DC2 shared_db
-
-```bash
-GGSCI> EDIT PARAMS REP2S
-```
-
-```
-REPLICAT REP2S
-USERIDALIAS dc2_shared
-ASSUMETARGETDEFS
-
-DBOPTIONS SETTAG 00
-
-MAP apimadmineast.*, TARGET apimadminwest.*, COMPARECOLS (ON UPDATE ALL, ON DELETE ALL), RESOLVECONFLICT (UPDATEROWEXISTS, (DEFAULT, USELATESTVERSION)), RESOLVECONFLICT (INSERTROWEXISTS, (DEFAULT, USELATESTVERSION)), RESOLVECONFLICT (DELETEROWMISSING, (DEFAULT, DISCARD));
-```
-
-#### Replicat: DC2→DC1 apim_db
-
-```bash
-GGSCI> EDIT PARAMS REP1A
-```
-
-```
-REPLICAT REP1A
-USERIDALIAS dc1_apim
-ASSUMETARGETDEFS
-
-DBOPTIONS SETTAG 00
-
-MAP apimadminwest.*, TARGET apimadmineast.*, COMPARECOLS (ON UPDATE ALL, ON DELETE ALL), RESOLVECONFLICT (UPDATEROWEXISTS, (DEFAULT, USELATESTVERSION)), RESOLVECONFLICT (INSERTROWEXISTS, (DEFAULT, USELATESTVERSION)), RESOLVECONFLICT (DELETEROWMISSING, (DEFAULT, DISCARD));
-```
-
-#### Replicat: DC2→DC1 shared_db
-
-```bash
-GGSCI> EDIT PARAMS REP1S
-```
-
-```
-REPLICAT REP1S
-USERIDALIAS dc1_shared
-ASSUMETARGETDEFS
-
-DBOPTIONS SETTAG 00
-
-MAP apimadminwest.*, TARGET apimadmineast.*, COMPARECOLS (ON UPDATE ALL, ON DELETE ALL), RESOLVECONFLICT (UPDATEROWEXISTS, (DEFAULT, USELATESTVERSION)), RESOLVECONFLICT (INSERTROWEXISTS, (DEFAULT, USELATESTVERSION)), RESOLVECONFLICT (DELETEROWMISSING, (DEFAULT, DISCARD));
-```
-
-Register the Replicats:
-
-```bash
-# Add Replicats (Integrated mode for Oracle 23c)
-GGSCI> DBLOGIN USERIDALIAS dc2_apim
-GGSCI> ADD REPLICAT REP2A, INTEGRATED, EXTTRAIL ./dirdat/a1
-GGSCI> DBLOGIN USERIDALIAS dc2_shared
-GGSCI> ADD REPLICAT REP2S, INTEGRATED, EXTTRAIL ./dirdat/s1
-
-GGSCI> DBLOGIN USERIDALIAS dc1_apim
-GGSCI> ADD REPLICAT REP1A, INTEGRATED, EXTTRAIL ./dirdat/a2
-GGSCI> DBLOGIN USERIDALIAS dc1_shared
-GGSCI> ADD REPLICAT REP1S, INTEGRATED, EXTTRAIL ./dirdat/s2
-```
-
-### Step 15: Start All Processes
-
-```bash
-GGSCI> START EXTRACT EXT1A
-GGSCI> START EXTRACT EXT1S
-GGSCI> START EXTRACT EXT2A
-GGSCI> START EXTRACT EXT2S
-
-GGSCI> START REPLICAT REP2A
-GGSCI> START REPLICAT REP2S
-GGSCI> START REPLICAT REP1A
-GGSCI> START REPLICAT REP1S
-```
+Then open <https://localhost:8443/> in a browser. Accept the self-signed cert, log in as `oggadmin` with the password from §5.2, and the UI will force a password change on first login.
 
 ---
 
-## Part 5: Verification
+## Part 6: Configure Active-Active Replication (GG Free Web UI)
 
-### Step 16: Check Process Status
+The rest of this section follows Oracle's official quickstart:
+<https://docs.oracle.com/en/middleware/goldengate/free/23/uggfe/create-active-active-database-replication.html>
+
+Keep the quickstart open in a second tab — it has screenshots for each step. This section lists the exact values to enter for the WSO2 APIM multi-DC case.
+
+### 6.1 Create 4 Database Connections
+
+In the UI, go to **Connections → Add Connection** and create four entries:
+
+| Connection name | Hostname  | Port | Service name | Database user | Password   |
+|-----------------|-----------|------|--------------|---------------|------------|
+| `dc1_apim`      | 10.2.4.4  | 1521 | apim_db      | sys           | `Apim@123` |
+| `dc1_shared`    | 10.2.4.4  | 1521 | shared_db    | sys           | `Apim@123` |
+| `dc2_apim`      | 10.1.4.4  | 1521 | apim_db      | sys           | `Apim@123` |
+| `dc2_shared`    | 10.1.4.4  | 1521 | shared_db    | sys           | `Apim@123` |
+
+For each connection:
+
+1. Tick **SYSDBA privileges available**.
+2. In the **GoldenGate user** section, enter `ggadmin` and choose a GG admin password (remember it — it's used inside each PDB).
+3. Click **Run analysis**. The UI checks archive log mode, supplemental logging, `enable_goldengate_replication`, and then generates a SQL script that creates the local `ggadmin` user inside the PDB with the required grants.
+4. Click **Run SQL** to apply the generated script, then **Save**.
+
+Repeat for all four connections.
+
+### 6.2 Create 2 Pipelines
+
+Go to **Pipelines → Create Pipeline** and create two pipelines using the **Active-Active Database Replication** recipe:
+
+| Pipeline name     | Recipe                             | Source       | Target       |
+|-------------------|------------------------------------|--------------|--------------|
+| `apim-db-bidir`   | Active-Active Database Replication | `dc1_apim`   | `dc2_apim`   |
+| `shared-db-bidir` | Active-Active Database Replication | `dc1_shared` | `dc2_shared` |
+
+For each pipeline walk through the wizard:
+
+1. **Basics**: enter the pipeline name, pick the recipe.
+2. **Source & Target**: select the source and target connections per the table above.
+3. **Mapping**: select the `APIMADMIN` schema only. Deselect `PDBADMIN`, `SYS`, `SYSTEM`, and any other system schemas the UI lists.
+4. **Conflict detection (ACDR)**: enable **Automatic Conflict Detection and Resolution** on all APIM tables, with resolution strategy **Latest timestamp wins**. The recipe will auto-add the required ACDR metadata columns on first start.
+5. **Review**: confirm the summary, then click **Create**.
+6. On the pipeline detail page, click **Start**.
+
+### 6.3 Verify replication
+
+1. Both pipelines should reach status **RUNNING** with no red error badges. The Runtime view should show nonzero Extract and Replicat operation counters within a minute or two.
+
+2. Round-trip test on `apim_db`. From **DC1**:
+
+   ```bash
+   docker exec -it oracle-db sqlplus apimadmin/Apim@123@localhost:1521/apim_db
+   ```
+   ```sql
+   UPDATE AM_APPLICATION
+      SET DESCRIPTION = 'replication test from DC1 @ ' || TO_CHAR(SYSTIMESTAMP)
+    WHERE APPLICATION_ID = (SELECT MIN(APPLICATION_ID) FROM AM_APPLICATION);
+   COMMIT;
+   EXIT;
+   ```
+
+   Then on **DC2**, within a few seconds:
+
+   ```bash
+   docker exec -it oracle-db sqlplus apimadmin/Apim@123@localhost:1521/apim_db
+   ```
+   ```sql
+   SELECT DESCRIPTION FROM AM_APPLICATION
+    WHERE APPLICATION_ID = (SELECT MIN(APPLICATION_ID) FROM AM_APPLICATION);
+   EXIT;
+   ```
+
+   Expect to see the same `replication test from DC1 ...` string.
+
+3. Reverse the test: run the `UPDATE` on DC2, then read it back on DC1. Both directions must work.
+
+4. Repeat the round-trip test on `shared_db` against a shared-db table (e.g. `REG_RESOURCE`) to exercise the `shared-db-bidir` pipeline.
+
+Once both directions on both pipelines are verified, replication is ready for the APIM control-plane, gateway, and traffic-manager pods to connect.
+
+---
+
+## Part 7: Troubleshooting & Operations
+
+### Container-level
 
 ```bash
-GGSCI> INFO ALL
+# Live logs
+docker logs -f oracle-db
+docker logs -f ogg-hub
+
+# Restart after a VM reboot or transient issue
+docker restart oracle-db
+docker restart ogg-hub
+
+# Inspect running processes
+docker ps
+docker inspect oracle-db | jq '.[0].State'
 ```
 
-Expected output — all processes should show `RUNNING`:
+### DB introspection
+
+```bash
+docker exec -it oracle-db sqlplus / as sysdba
 ```
-Program     Status      Group       Lag at Chkpt  Time Since Chkpt
-
-MANAGER     RUNNING
-EXTRACT     RUNNING     EXT1A       00:00:00      00:00:02
-EXTRACT     RUNNING     EXT1S       00:00:00      00:00:02
-EXTRACT     RUNNING     EXT2A       00:00:00      00:00:05
-EXTRACT     RUNNING     EXT2S       00:00:00      00:00:05
-REPLICAT    RUNNING     REP1A       00:00:00      00:00:02
-REPLICAT    RUNNING     REP1S       00:00:00      00:00:02
-REPLICAT    RUNNING     REP2A       00:00:00      00:00:05
-REPLICAT    RUNNING     REP2S       00:00:00      00:00:05
-```
-
-### Step 17: Test Replication
-
-Insert a test row on DC1 and verify it appears on DC2 (and vice versa).
-
-**DC1 — apim_db:**
 ```sql
--- Insert on DC1
-sqlplus apimadmineast/{password}@DC1_APIM
+SELECT NAME, OPEN_MODE FROM V$PDBS;
+SELECT LOG_MODE, FORCE_LOGGING, SUPPLEMENTAL_LOG_DATA_MIN FROM V$DATABASE;
+SHOW PARAMETER ENABLE_GOLDENGATE_REPLICATION;
 
-INSERT INTO AM_ALERT_TYPES (ALERT_TYPE_ID, ALERT_TYPE_NAME, STAKE_HOLDER)
-VALUES (999, 'test-dc1-replication', 'admin-dashboard');
-COMMIT;
-
--- Check on DC2 (should appear within seconds)
-sqlplus apimadminwest/{password}@DC2_APIM
-
-SELECT * FROM AM_ALERT_TYPES WHERE ALERT_TYPE_ID = 999;
+-- Recent archive log switches (Extract needs these to mine)
+SELECT SEQUENCE#, FIRST_TIME FROM V$ARCHIVED_LOG ORDER BY FIRST_TIME DESC FETCH FIRST 5 ROWS ONLY;
 ```
 
-**DC2 — apim_db:**
+### OGG Free web UI
+
+- Pipeline stuck in **ERROR**: click the pipeline → **Logs** tab → copy the error string. The most common causes are: missing ACDR metadata on a table that was added after pipeline start (stop the pipeline, reopen the Mapping step, re-enable ACDR, start), and DB connectivity (run `nc -zv` from the DC1 VM to the target DC's port 1521).
+- Pipeline status returns to **RUNNING** after a transient issue — no manual intervention needed once the underlying DB is reachable again.
+- Forgot the `oggadmin` UI password: `docker exec -it ogg-hub /u01/app/ogg/bin/adminclient` provides a local CLI, or tear down and recreate the container (the pipelines are stored on the named volume and survive, but credentials do not).
+
+### Hard reset of a DB container (data loss)
+
+If the DB container's state is wedged and you want to start clean:
+
+```bash
+docker rm -f oracle-db
+docker volume rm oracle-db-data
+# Then re-run Part 3 (start container) and Part 4 (PDBs + schemas + GG prereqs)
+```
+
+Any existing pipelines will stop replicating from that DC because the source/target PDB is gone. Re-run their Mapping step after the PDBs exist again, then Start.
+
+### Drop and recreate a single PDB
+
+If you created the wrong PDB on the wrong VM, drop just that PDB without touching the rest of the container state:
+
 ```sql
--- Insert on DC2
-sqlplus apimadminwest/{password}@DC2_APIM
-
-INSERT INTO AM_ALERT_TYPES (ALERT_TYPE_ID, ALERT_TYPE_NAME, STAKE_HOLDER)
-VALUES (998, 'test-dc2-replication', 'admin-dashboard');
-COMMIT;
-
--- Check on DC1 (should appear within seconds)
-sqlplus apimadmineast/{password}@DC1_APIM
-
-SELECT * FROM AM_ALERT_TYPES WHERE ALERT_TYPE_ID = 998;
+-- inside sqlplus / as sysdba
+ALTER PLUGGABLE DATABASE apim_db CLOSE IMMEDIATE;
+DROP PLUGGABLE DATABASE apim_db INCLUDING DATAFILES;
 ```
 
-**Clean up test data** (run on either DC — will replicate to the other):
-```sql
-DELETE FROM AM_ALERT_TYPES WHERE ALERT_TYPE_ID IN (998, 999);
-COMMIT;
-```
-
----
-
-## Networking Checklist
-
-- [ ] VNet peering configured between East US 1 and West US 2 VNets
-- [ ] Oracle listener port 1521 open in NSG rules (bidirectional)
-- [ ] GoldenGate ports 7809-7810 open in NSG rules
-- [ ] GoldenGate hub VM can reach both Oracle DB VMs (`tnsping` test)
-- [ ] Both Oracle DB VMs have archive log mode enabled
-- [ ] Supplemental logging enabled on both DBs
-
----
-
-## Monitoring
-
-### Check replication lag
-```bash
-GGSCI> LAG EXTRACT EXT1A
-GGSCI> LAG EXTRACT EXT2A
-GGSCI> LAG REPLICAT REP1A
-GGSCI> LAG REPLICAT REP2A
-```
-
-### View statistics
-```bash
-GGSCI> STATS EXTRACT EXT1A, LATEST
-GGSCI> STATS REPLICAT REP2A, LATEST
-```
-
-### View process details
-```bash
-GGSCI> INFO EXTRACT EXT1A, DETAIL
-GGSCI> INFO REPLICAT REP2A, DETAIL
-```
-
----
-
-## Troubleshooting
-
-### Check GoldenGate logs
-```bash
-# View report file for a process
-GGSCI> VIEW REPORT EXT1A
-GGSCI> VIEW REPORT REP2A
-
-# Or read directly
-cat $OGG_HOME/dirrpt/EXT1A.rpt
-cat $OGG_HOME/dirrpt/REP2A.rpt
-```
-
-### Process is ABENDED
-```bash
-# Check the report for errors
-GGSCI> VIEW REPORT <process_name>
-
-# Common fixes:
-# 1. Credential issues — re-add credentials
-# 2. Network timeout — check NSG rules and VNet peering
-# 3. Missing supplemental logging — re-enable on the source DB
-
-# Restart after fixing
-GGSCI> START <process_name>
-```
-
-### If Extract falls behind
-```bash
-# Check lag
-GGSCI> LAG EXTRACT EXT2A
-
-# If lag is large, check network between hub and DC2
-# Consider increasing Extract parallelism in the parameter file
-```
-
-### Conflict resolution logs
-Check the GoldenGate discard file for rejected rows:
-```bash
-cat $OGG_HOME/dirrpt/<replicat_name>.dsc
-```
+Then re-run the `CREATE PLUGGABLE DATABASE` + grants + schema-load steps from Parts 4.1 and 4.3 for just that PDB.
 
 ---
 
 ## Summary of Operations
 
-| Step | DC1 (East US 1) | DC2 (West US 2) | GoldenGate Hub (DC1) |
-|------|-----------------|-----------------|----------------------|
-| VM provisioning | Oracle DB VM | Oracle DB VM | GoldenGate VM |
-| Oracle 23c install | Yes | Yes | No (OGG only) |
-| GoldenGate install | No | No | Yes |
-| Archive log mode | Enable | Enable | — |
-| Supplemental logging | Enable | Enable | — |
-| GoldenGate replication | Enable | Enable | — |
-| GoldenGate admin user | C##GGADMIN | C##GGADMIN | — |
-| Create PDBs | apim_db, shared_db | apim_db, shared_db | — |
-| Run table scripts | `dc1/Oracle/` | `dc2/Oracle/` | — |
-| Manager process | — | — | Port 7809 |
-| Extract processes | — | — | EXT1A, EXT1S, EXT2A, EXT2S |
-| Replicat processes | — | — | REP1A, REP1S, REP2A, REP2S |
-| Verify | Test inserts | Test inserts | INFO ALL |
-
----
-
-## Key Differences from PostgreSQL (pglogical) and MSSQL (P2P)
-
-| Aspect | PostgreSQL | MSSQL | Oracle |
-|--------|-----------|-------|--------|
-| Replication | pglogical (built-in) | P2P Transactional (built-in) | GoldenGate (separate product) |
-| Topology | Each DB has provider/subscriber | Each server is publisher/subscriber | Central hub manages all |
-| ID collision prevention | Sequences START/INC | IDENTITY seed/increment | Sequences START/INC |
-| Conflict resolution | Commit timestamp (LWW) | Last Writer Wins | USELATESTVERSION (LWW) |
-| Loop prevention | `forward_origins := '{}'` | Originator ID | EXCLUDETAG / SETTAG |
-| Infrastructure | Azure Flexible Server (PaaS) | Azure VMs | Azure VMs + GG hub VM |
+1. **Provision (Part 1)** — 2 Ubuntu 22.04 VMs (`apim-4-7-eus1-oracle`, `apim-4-7-wus2-oracle`), NSG rules for 1521 on both and 443 on DC1, VNet peering.
+2. **Docker (Part 2)** — install `docker.io`, accept Oracle CR terms in a browser once, `docker login` and pull `database/free` on both VMs plus `goldengate/goldengate-free` on DC1.
+3. **DB containers (Part 3)** — `docker run` the `oracle-db` container on both VMs with `--network host`, `-e ORACLE_PWD=Apim@123`, and a named volume; wait for `DATABASE IS READY TO USE!`.
+4. **Schemas (Part 4)** — create `apim_db` + `shared_db` PDBs, create `apimadmin` with grants, enable archive log + force logging + supplemental logging + `enable_goldengate_replication`, load `dbscripts/dc1/Oracle/` on DC1 and `dbscripts/dc2/Oracle/` on DC2 as-is.
+5. **OGG container (Part 5)** — `docker run` `ogg-hub` on DC1, grab the initial admin password from the logs, tunnel to the web UI via the jump-box.
+6. **Pipelines (Part 6)** — create 4 DB connections (`dc1_apim`, `dc1_shared`, `dc2_apim`, `dc2_shared`), create 2 pipelines (`apim-db-bidir`, `shared-db-bidir`) using the Active-Active recipe with ACDR + Latest-timestamp-wins, Start both, verify bidirectional round-trips on both PDBs.
+7. **Operate (Part 7)** — `docker logs`, `docker restart`, pipeline retry from the UI, hard-reset the DB volume only as a last resort.
