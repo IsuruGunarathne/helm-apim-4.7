@@ -1,0 +1,104 @@
+fullnameOverride: "wso2am-tm"
+
+aws:
+  enabled: false
+azure:
+  enabled: false
+gcp:
+  enabled: false
+
+kubernetes:
+  gatewayAPI:
+    enabled: false
+  initContainers:
+    - name: oracle-driver-init
+      image: busybox:1.36
+      command:
+        - /bin/sh
+        - -c
+        - |
+          wget -O /jdbc-driver/ojdbc11-23.6.0.24.10.jar \
+            "https://repo1.maven.org/maven2/com/oracle/database/jdbc/ojdbc11/23.6.0.24.10/ojdbc11-23.6.0.24.10.jar" && \
+          echo "Oracle JDBC driver downloaded successfully"
+      volumeMounts:
+        - name: oracle-driver-vol
+          mountPath: /jdbc-driver
+  extraVolumes:
+    - name: oracle-driver-vol
+      emptyDir: {}
+  extraVolumeMounts:
+    - name: oracle-driver-vol
+      mountPath: /home/wso2carbon/wso2am-tm-4.7.0-SNAPSHOT/repository/components/lib/ojdbc11-23.6.0.24.10.jar
+      subPath: ojdbc11-23.6.0.24.10.jar
+      readOnly: true
+
+wso2:
+  apim:
+    version: "4.7.0"
+    portOffset: 0
+    secureVaultEnabled: false
+    configurations:
+      adminUsername: "admin"
+      adminPassword: "admin"
+      encryption:
+        key: "ABCDefgh12345678"
+      security:
+        jksSecretName: ""
+        keystores:
+          primary:
+            enabled: false
+          tls:
+            enabled: true
+            password: "wso2carbon"
+            keyPassword: "wso2carbon"
+          internal:
+            enabled: false
+        truststore:
+          password: "wso2carbon"
+      databases:
+        type: "oracle"
+        jdbc:
+          driver: "oracle.jdbc.OracleDriver"
+        apim_db:
+          url: "jdbc:oracle:thin:@//10.2.4.4:1521/apim_db"
+          username: "apimadmineast"
+          password: "DATABASE_PASSWORD"
+          poolParameters:
+            validationQuery: "SELECT 1 FROM DUAL"
+        shared_db:
+          url: "jdbc:oracle:thin:@//10.2.4.4:1521/shared_db"
+          username: "apimadmineast"
+          password: "DATABASE_PASSWORD"
+          poolParameters:
+            validationQuery: "SELECT 1 FROM DUAL"
+      km:
+        serviceUrl: "wso2am-cp-service"
+        servicePort: 9443
+      eventhub:
+        serviceUrl: "wso2am-cp-service"
+        urls:
+          - "wso2am-cp-1-service"
+          - "wso2am-cp-2-service"
+
+  deployment:
+    highAvailability: true
+    startupProbe:
+      initialDelaySeconds: 120
+      periodSeconds: 10
+      failureThreshold: 12
+    image:
+      registry: "docker.io"
+      repository: "isurugunarathne/wso2apim:tm-4.7.0-beta"
+      digest: "sha256:e3f29f20fe8d5d4757441ed3a5c0c0171bb48a70ba5c97fc1a88d6864685ee6a"
+      imagePullPolicy: Always
+    resources:
+      requests:
+        memory: "4Gi"
+        cpu: "1500m"
+      limits:
+        memory: "4Gi"
+        cpu: "1800m"
+      jvm:
+        memory:
+          xms: "1024m"
+          xmx: "2048m"

@@ -1,0 +1,130 @@
+fullnameOverride: "wso2am-cp"
+
+aws:
+  enabled: false
+azure:
+  enabled: false
+gcp:
+  enabled: false
+
+kubernetes:
+  gatewayAPI:
+    enabled: false
+  ingress:
+    tlsSecret: "apim-ingress-tls"
+    controlPlane:
+      enabled: true
+      hostname: "cp.wus2.apim.example.com"
+      annotations:
+        kubernetes.io/ingress.class: nginx
+        nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+        nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+        nginx.ingress.kubernetes.io/proxy-read-timeout: "180"
+        nginx.ingress.kubernetes.io/proxy-send-timeout: "180"
+        nginx.ingress.kubernetes.io/proxy-buffer-size: "16k"
+  initContainers:
+    - name: oracle-driver-init
+      image: busybox:1.36
+      command:
+        - /bin/sh
+        - -c
+        - |
+          wget -O /jdbc-driver/ojdbc11-23.6.0.24.10.jar \
+            "https://repo1.maven.org/maven2/com/oracle/database/jdbc/ojdbc11/23.6.0.24.10/ojdbc11-23.6.0.24.10.jar" && \
+          echo "Oracle JDBC driver downloaded successfully"
+      volumeMounts:
+        - name: oracle-driver-vol
+          mountPath: /jdbc-driver
+  extraVolumes:
+    - name: oracle-driver-vol
+      emptyDir: {}
+  extraVolumeMounts:
+    - name: oracle-driver-vol
+      mountPath: /home/wso2carbon/wso2am-acp-4.7.0-SNAPSHOT/repository/components/lib/ojdbc11-23.6.0.24.10.jar
+      subPath: ojdbc11-23.6.0.24.10.jar
+      readOnly: true
+
+wso2:
+  apim:
+    version: "4.7.0"
+    portOffset: 0
+    secureVaultEnabled: false
+    configurations:
+      adminUsername: "admin"
+      adminPassword: "admin"
+      encryption:
+        key: "ABCDefgh12345678"
+      security:
+        jksSecretName: ""
+        keystores:
+          primary:
+            enabled: false
+          tls:
+            enabled: true
+            password: "wso2carbon"
+            keyPassword: "wso2carbon"
+          internal:
+            enabled: false
+        truststore:
+          password: "wso2carbon"
+      transport:
+        https:
+          proxyPort: 443
+      databases:
+        type: "oracle"
+        jdbc:
+          driver: "oracle.jdbc.OracleDriver"
+        apim_db:
+          url: "jdbc:oracle:thin:@//10.1.4.4:1521/apim_db"
+          username: "apimadminwest"
+          password: "DATABASE_PASSWORD"
+          poolParameters:
+            validationQuery: "SELECT 1 FROM DUAL"
+        shared_db:
+          url: "jdbc:oracle:thin:@//10.1.4.4:1521/shared_db"
+          username: "apimadminwest"
+          password: "DATABASE_PASSWORD"
+          poolParameters:
+            validationQuery: "SELECT 1 FROM DUAL"
+      oauth_config:
+        oauth2JWKSUrl: "https://wso2am-cp-service:9443/oauth2/jwks"
+      gateway:
+        environments:
+          - name: "Default"
+            type: "hybrid"
+            gatewayType: "Regular"
+            provider: "wso2"
+            displayInApiConsole: true
+            description: "DC2 Gateway - West US 2"
+            showAsTokenEndpointUrl: true
+            serviceName: "wso2am-gw-service"
+            servicePort: 9443
+            wsHostname: "gw.wus2.apim.example.com"
+            httpHostname: "gw.wus2.apim.example.com"
+            websubHostname: "gw.wus2.apim.example.com"
+
+  deployment:
+    highAvailability: true
+    startupProbe:
+      initialDelaySeconds: 120
+      periodSeconds: 10
+      failureThreshold: 12
+    image:
+      registry: "docker.io"
+      repository: "isurugunarathne/wso2apim:acp-4.7.0-beta"
+      digest: "sha256:5ff06a1b35cc16d573dc5784f6a95639f45c9881fbf938e6bcf31cc391e51f28"
+      imagePullPolicy: Always
+    resources:
+      requests:
+        memory: "4Gi"
+        cpu: "1500m"
+      limits:
+        memory: "4Gi"
+        cpu: "1800m"
+      jvm:
+        memory:
+          xms: "1024m"
+          xmx: "2048m"
+    persistence:
+      solrIndexing:
+        enabled: false
