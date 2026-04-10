@@ -52,7 +52,7 @@ export DC2_PASS="Apim@123"
 
 # GoldenGate Free web UI (served from the ogg-hub container on the DC1 VM)
 export OGG_HOST=10.2.4.4
-export OGG_UI_PORT=443
+export OGG_UI_PORT=9011   # insecure mode — see §5.1
 ```
 
 > **Password placeholder**: `Apim@123` is used throughout as a copy-paste-friendly default. Replace it with a strong password for any non-lab deployment, and keep it in sync across the `-e ORACLE_PWD=...` env var, PDB admin users, the `apimadmin` grants, and the Helm values files under `distributed/*/azure-values-dc*-oracle.yaml`.
@@ -106,7 +106,7 @@ az vm create \
 - DC2 is smaller (2 vCPU / 8 GB RAM) because it only runs a DB container.
 - 128 GB OS disk is enough for the stock images plus Docker volumes in a lab. If you want extra headroom for archive logs or image caches, attach and mount a data disk and point `/var/lib/docker` at it — that's purely optional and not covered here.
 
-> **Dedicated OGG hub (optional)**: If you prefer the OGG Free container on its own VM, provision a third small Ubuntu VM in `eastus` on `oracle-subnet` (same shape, 2 vCPU / 8 GB), run only the `docker run …/goldengate-oracle-free` command from Part 5 there, and move the NSG rule for TCP 443 from the DC1 VM to that VM. The DB containers in Parts 3–4 stay unchanged.
+> **Dedicated OGG hub (optional)**: If you prefer the OGG Free container on its own VM, provision a third small Ubuntu VM in `eastus` on `oracle-subnet` (same shape, 2 vCPU / 8 GB) and run only the `docker run …/goldengate-oracle-free` command from Part 5 there. The DB containers in Parts 3–4 stay unchanged. No extra NSG rule is needed — the web UI is reached over an SSH tunnel (port 22), which is already open.
 
 ### 1.2 NSG Rules
 
@@ -123,7 +123,7 @@ get_nsg() {
 }
 ```
 
-**DC1 VM — inbound 1521 (Oracle) + 443 (OGG Free web UI):**
+**DC1 VM — inbound 1521 only:**
 ```bash
 DC1_NSG=$(get_nsg apim-4-7-eus1-oracle)
 
@@ -137,18 +137,9 @@ az network nsg rule create \
   --protocol Tcp \
   --destination-port-ranges 1521 \
   --source-address-prefixes VirtualNetwork
-
-az network nsg rule create \
-  --resource-group $RG \
-  --nsg-name $DC1_NSG \
-  --name AllowOggUi443 \
-  --priority 1020 \
-  --direction Inbound \
-  --access Allow \
-  --protocol Tcp \
-  --destination-port-ranges 443 \
-  --source-address-prefixes VirtualNetwork
 ```
+
+> **No rule needed for the OGG Free web UI (9011).** The web UI is reached from your laptop via an SSH tunnel (see §5.3), which rides port 22 — already open on Azure's default SSH rule. Don't open 9011 on the NSG: it would expose the insecure-mode Service Manager's HTTP listener to the VNet.
 
 **DC2 VM — inbound 1521 only:**
 ```bash
@@ -416,6 +407,26 @@ docker exec -i oracle-db sqlplus 'apimadmin/"Apim@123"@localhost:1521/shared_db'
 
 **DC2 VM:** same commands, but replace `dc1/Oracle` with `dc2/Oracle` in all four `docker cp` lines.
 
+```bash
+cd ~
+git clone <this-repo-url> helm-apim-4.7
+cd helm-apim-4.7
+
+# apim_db scripts
+docker cp dbscripts/dc2/Oracle/apimgt/tables_23c.sql    oracle-db:/tmp/apim_tables.sql
+docker cp dbscripts/dc2/Oracle/apimgt/sequences_23c.sql oracle-db:/tmp/apim_sequences.sql
+
+# shared_db scripts
+docker cp dbscripts/dc2/Oracle/tables_23c.sql           oracle-db:/tmp/shared_tables.sql
+docker cp dbscripts/dc2/Oracle/sequences_23c.sql        oracle-db:/tmp/shared_sequences.sql
+
+# Run them
+docker exec -i oracle-db sqlplus 'apimadmin/"Apim@123"@localhost:1521/apim_db'   @/tmp/apim_tables.sql
+docker exec -i oracle-db sqlplus 'apimadmin/"Apim@123"@localhost:1521/apim_db'   @/tmp/apim_sequences.sql
+docker exec -i oracle-db sqlplus 'apimadmin/"Apim@123"@localhost:1521/shared_db' @/tmp/shared_tables.sql
+docker exec -i oracle-db sqlplus 'apimadmin/"Apim@123"@localhost:1521/shared_db' @/tmp/shared_sequences.sql
+```
+
 ### 4.4 Verify the schemas loaded
 
 On either VM:
@@ -466,9 +477,13 @@ docker run -d \
   --name ogg-hub \
   --network host \
   --restart unless-stopped \
-  -v ogg-hub-data:/u01 \
+  -v ogg-hub-data:/u02 \
   container-registry.oracle.com/goldengate/goldengate-oracle-free:latest
 ```
+
+> **Important:** mount the volume at **`/u02`**, not `/u01`. In the GG Free image, `/u01` is the binaries/system directory and `/u02` is the persistent deployment data directory — mounting on `/u01` will crash the init script.
+
+> **Why not `OGG_SECURE_DEPLOYMENT=true`?** The current `goldengate-oracle-free:latest` image has a broken secure-deployment init path: on first boot it generates certs under `/u02/ssl/` but then crashes in `deployment-init.py → establish_secure_service_manager → reset_servicemanager_configuration` with `FileNotFoundError: '/u02/ServiceManager/var/lib/conf/ServiceManager-config.dat'` (ServiceManager hasn't been created yet), and every subsequent restart sees the half-written `/u02/ssl/server.pem` from the failed first boot and fails with `KeyError: 'OGG_SERVER_WALLET'`. Insecure mode works cleanly and is fine here — both DC VMs live on a private Azure VNet and the web UI is reached over an SSH tunnel, so there is no plaintext traffic on the public internet.
 
 ### 5.2 Get the initial admin password
 
@@ -482,14 +497,49 @@ Copy the printed password — you'll need it for the first login.
 
 ### 5.3 Reach the web UI via SSH tunnel
 
-The OGG Free web UI listens on TCP 443 inside the container (and, because of `--network host`, directly on the VM's private IP `10.2.4.4`). The VM has no public IP, so tunnel through the jump-box from your laptop:
+In insecure mode the Service Manager listens on HTTP port **9011** inside the container. Because of `--network host`, it's bound directly to the DC1 VM's network stack, so `localhost:9011` on the DC1 VM itself *is* the Service Manager UI.
+
+Service Manager is only the entry point — once you click into the `Local` deployment and then into **Administration Service**, **Distribution Service**, **Receiver Service**, or **Performance Metrics Service**, the browser is redirected to *different* ports on the same host: **9012** (Administration), **9013** (Distribution), **9014** (Receiver), **9015** (Performance Metrics). Each of those services has its own embedded web server. If the SSH tunnel only covers 9011, those sub-pages will fail with connection-refused as soon as you click them.
+
+To avoid re-tunneling mid-session, forward the full range up front:
+
+**If the DC1 VM has a public IP** (the simple case — just SSH straight in and forward):
 
 ```bash
 # From your laptop
-ssh -L 8443:10.2.4.4:443 azureuser@<jump-box-public-ip>
+ssh -i ./keys/apim-4-7-eus1-oracle_key_0410.pem \
+  -L 8011:localhost:9011 \
+  -L 9012:localhost:9012 \
+  -L 9013:localhost:9013 \
+  -L 9014:localhost:9014 \
+  -L 9015:localhost:9015 \
+  azureuser@<DC1-public-ip>
 ```
 
-Then open <https://localhost:8443/> in a browser. Accept the self-signed cert, log in as `oggadmin` with the password from §5.2, and the UI will force a password change on first login.
+**If the DC1 VM has no public IP** (jump-box hop, which is what `az vm create --public-ip-address ""` in §1.1 leaves you with):
+
+```bash
+# From your laptop
+ssh \
+  -L 8011:10.2.4.4:9011 \
+  -L 9012:10.2.4.4:9012 \
+  -L 9013:10.2.4.4:9013 \
+  -L 9014:10.2.4.4:9014 \
+  -L 9015:10.2.4.4:9015 \
+  azureuser@<jump-box-public-ip>
+```
+
+Note the asymmetric mapping: Service Manager is reached at `localhost:8011` (remapped, because your laptop may already have something on 9011), but the service sub-pages are forwarded `localhost:901x → remote:901x` using the *same* port numbers. The reason is that when Service Manager redirects the browser to a service, it emits an absolute URL like `http://<host>:9012/…`, and your browser will hit your laptop's 9012. If you remap those to different local ports you'd also have to rewrite the internal redirects, which isn't worth the hassle — just make sure 9012–9015 are free on your laptop.
+
+Open <http://localhost:8011/> in a browser (HTTP, not HTTPS), log in as `oggadmin` with the password from §5.2, and the UI will force a password change on first login.
+
+### 5.4 Navigate into the deployment
+
+After the password change, you land on Service Manager's home. The pipelines, connections, and recipes don't live here — they live inside a **deployment**, and the GG Free container auto-creates one named **`Local`** on first boot. To reach it:
+
+1. In the left nav, expand **Deployments** and click **Local**. A **Services** table appears with four rows — **Administration Service**, **Distribution Service**, **Receiver Service**, **Performance Metrics Service** — all in **Running** status.
+2. Click **Administration Service**. The browser redirects to `http://localhost:9012/…` (that's why §5.3 forwards 9012). This is where connections, extracts, replicats, and the Active-Active recipe live.
+3. The version banner will read something like `Oracle GoldenGate 23.26.1.0.6 Free for Oracle` — that's still 23ai; `23.26` is a minor-version bump of the 23ai release train, not a new major release.
 
 ---
 
@@ -500,9 +550,11 @@ The rest of this section follows Oracle's official quickstart:
 
 Keep the quickstart open in a second tab — it has screenshots for each step. This section lists the exact values to enter for the WSO2 APIM multi-DC case.
 
+All of the steps below happen inside **Administration Service** (the page you reached at the end of §5.4), not in Service Manager. If your left nav shows `Home / User Administration / Deployments / Certificate Management / …` you are still in Service Manager — go back to §5.4 and click **Deployments → Local → Administration Service**.
+
 ### 6.1 Create 4 Database Connections
 
-In the UI, go to **Connections → Add Connection** and create four entries:
+In Administration Service, go to **Connections → Add Connection** and create four entries:
 
 | Connection name | Hostname  | Port | Service name | Database user | Password   |
 |-----------------|-----------|------|--------------|---------------|------------|
@@ -672,7 +724,7 @@ Then re-run the `CREATE PLUGGABLE DATABASE` + grants + schema-load steps from Pa
 
 ## Summary of Operations
 
-1. **Provision (Part 1)** — 2 Ubuntu 22.04 VMs (`apim-4-7-eus1-oracle`, `apim-4-7-wus2-oracle`), NSG rules for 1521 on both and 443 on DC1, VNet peering.
+1. **Provision (Part 1)** — 2 Ubuntu 22.04 VMs (`apim-4-7-eus1-oracle`, `apim-4-7-wus2-oracle`), NSG rules for 1521 on both VMs, VNet peering.
 2. **Docker (Part 2)** — install `docker.io`, accept Oracle CR terms in a browser once, `docker login` and pull `database/free` on both VMs plus `goldengate/goldengate-oracle-free` on DC1.
 3. **DB containers (Part 3)** — `docker run` the `oracle-db` container on both VMs with `--network host`, `-e ORACLE_PWD=Apim@123`, and a named volume; wait for `DATABASE IS READY TO USE!`.
 4. **Schemas (Part 4)** — create `apim_db` + `shared_db` PDBs, create `apimadmin` with grants, enable archive log + force logging + supplemental logging + `enable_goldengate_replication`, load `dbscripts/dc1/Oracle/` on DC1 and `dbscripts/dc2/Oracle/` on DC2 as-is.
