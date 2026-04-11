@@ -473,6 +473,8 @@ Prior Oracle GG docs tell you to provision `ggadmin` by calling the helper wrapp
 
 A second thing: **`LOGMINING` is not included in the `DBA` role in 23ai**. Extract mines redo logs via LogMiner, so the user Extract connects as needs an explicit `GRANT LOGMINING`. In our setup Extract connects as `apimadmin` (via the `dc1_apim` / `dc2_apim` / `dc1_shared` / `dc2_shared` aliases we'll create in §6.1), so `apimadmin` needs `LOGMINING` on top of the `DBA` it already got in §4.1.
 
+A third thing: **`apimadmin` also needs the built-in `OGG_CAPTURE` role** to be able to `REGISTER EXTRACT ... DATABASE` in §6.8. Without it, `REGISTER EXTRACT` fails with `OGG-02062 User apimadmin does not have the required privileges to use integrated capture`. The "normal" way to provision capture privileges is `DBMS_GOLDENGATE_ADM.GRANT_ADMIN_PRIVILEGE(..., privilege_type => 'CAPTURE')`, but in GG Free 23.26 that wrapper *also* silently fails to populate the view integrated capture checks (it's gated by the same `ORA-26988`-adjacent machinery that blocks `dbms_goldengate_auth.grant_admin_privilege`). Granting the `OGG_CAPTURE` role directly is the supported 23ai path and works without any wrapper. `SELECT ANY DICTIONARY` + `EXECUTE ON DBMS_XSTREAM_GG` are the two supporting privileges the role expects you to also grant explicitly.
+
 Run this **on both DC1 and DC2**, inside `sqlplus / as sysdba`:
 
 ```bash
@@ -509,6 +511,11 @@ GRANT EXECUTE ON DBMS_APPLY_ADM   TO apimadmin;
 GRANT EXECUTE ON DBMS_STREAMS_ADM TO apimadmin;
 GRANT EXECUTE ON DBMS_AQADM       TO apimadmin;
 
+-- apimadmin: OGG_CAPTURE role + supporting privileges for REGISTER EXTRACT (§6.8)
+GRANT OGG_CAPTURE            TO apimadmin;
+GRANT SELECT ANY DICTIONARY  TO apimadmin;
+GRANT EXECUTE ON DBMS_XSTREAM_GG  TO apimadmin;
+
 -- =====================================================================
 -- shared_db — repeat the same block
 -- =====================================================================
@@ -535,6 +542,10 @@ GRANT EXECUTE ON DBMS_CAPTURE_ADM TO apimadmin;
 GRANT EXECUTE ON DBMS_APPLY_ADM   TO apimadmin;
 GRANT EXECUTE ON DBMS_STREAMS_ADM TO apimadmin;
 GRANT EXECUTE ON DBMS_AQADM       TO apimadmin;
+
+GRANT OGG_CAPTURE            TO apimadmin;
+GRANT SELECT ANY DICTIONARY  TO apimadmin;
+GRANT EXECUTE ON DBMS_XSTREAM_GG  TO apimadmin;
 
 EXIT;
 ```
@@ -662,11 +673,11 @@ Each of the four DB connections from §6.1 needs three one-time initialization s
 
 > **Why it must live in `GGADMIN` and not `APIMADMIN`**: the checkpoint table is written to on every Replicat commit. If it lived inside the replicated schema, Replicat's checkpoint UPDATEs would themselves be captured by Extract and ship back across the link, creating an infinite metadata loop. The `GGADMIN` schema is deliberately *not* listed in any `TABLE` directive in §6.4, so Extract ignores it.
 
-**2. Schema-level Trandata** — adds supplemental logging to every table in `APIMADMIN`. Click **Trandata → Add Schema Trandata**, enter `APIMADMIN` as the schema name, and **tick "All Columns"**. All-columns logging is required for the latest-timestamp-wins conflict resolution we'll wire up in the §6.6 stub (ACDR needs every column of every row in the redo stream, not just the changed ones).
+**2. Schema-level Trandata** — adds supplemental logging to every table in `APIMADMIN`. Click **Trandata → Add Schema Trandata**, enter `APIMADMIN` as the schema name, and **tick "All Columns"**. All-columns logging is required for the latest-timestamp-wins conflict resolution we'll wire up in §6.7 (ACDR needs every column of every row in the redo stream, not just the changed ones).
 
-The UI will iterate over the schema and report the number of tables instrumented — expect ~246 on an `apim_db` connection and ~51 on a `shared_db` connection.
+The UI will fire off `ADD SCHEMATRANDATA APIMADMIN ALLCOLS` under the hood and surface confirmations in the bell-icon notification drawer — watch for `OGG-01788 SCHEMATRANDATA has been added` and `OGG-01977 SCHEMATRANDATA for all columns has been added`. Those notifications are the authoritative success signal in 23.26; there is no "N tables instrumented" count in the UI. Verification from the database side comes in §6.6 below.
 
-**3. Heartbeat table** — the UI-installed heartbeat mechanism used to measure end-to-end replication lag. Click **Heartbeat → Add Heartbeat Table**. There are no parameters; it silently creates `GGADMIN.GG_HEARTBEAT_*` tables in the PDB.
+**3. Heartbeat table** — the UI-installed heartbeat mechanism used to measure end-to-end replication lag. Click **Heartbeat → Add Heartbeat Table**. There are no parameters; it creates three tables (`GG_HEARTBEAT`, `GG_HEARTBEAT_SEED`, `GG_HEARTBEAT_HISTORY`) in the **connection user's schema**, i.e. `APIMADMIN` — not `GGADMIN`, even though the older GoldenGate documentation implies otherwise. That's expected and will not cause a problem, because §6.4's Extract parameter file explicitly excludes `APIMADMIN.GG_HEARTBEAT*` from capture. Nothing to fix here; just don't be surprised when they show up under `APIMADMIN` in `dba_tables`.
 
 At the end of §6.2 you should have done **Checkpoint + Trandata + Heartbeat on all 4 connections = 12 UI actions**. Missing steps here surface later as confusing errors at Extract/Replicat create time, so it's worth a quick walk through each of the four connections to confirm all three are present before continuing.
 
@@ -687,7 +698,9 @@ Same wizard as §6.1, just with user and alias swapped:
 
 Click **Test** on each. A red "invalid credentials" here means you either skipped §4.6 on one of the two DCs, or used a different password when creating `ggadmin` on one side — fix before continuing.
 
-**Do not** run Checkpoint / Trandata / Heartbeat on these four. Those artifacts are already installed by §6.2 via the `apimadmin` connections and live at the PDB level, not per-connection — adding them a second time here duplicates the table definitions and fails.
+**Heartbeat on these four: yes. Checkpoint and Trandata: no.** Click into each of the four `_gg` connections and run **Heartbeat → Add Heartbeat Table** on it. That's the only one of the three buttons you need here. Skip Checkpoint and Trandata — those are already installed from §6.2 via the `apimadmin` connections and shouldn't be re-run.
+
+> **Why the asymmetry?** GoldenGate's UI tracks the "heartbeat enabled" bit **per credential alias**, not per schema — so even though the underlying `APIMADMIN.GG_HEARTBEAT*` tables already exist on the DB side from §6.2, each Replicat's Heartbeat tab will show *"Heartbeat table is not enabled for credentials: 'OracleGoldenGate-<alias>_gg'"* until you associate the heartbeat tables with that specific alias. The UI's `Add Heartbeat Table` action is idempotent with respect to the underlying tables — it detects them and just registers the alias association. Trandata is a DB-level supplemental-logging setting already applied to all `APIMADMIN` tables in §6.2 and only matters source-side, so target-side `_gg` aliases don't need it. Checkpoint is referenced by fully-qualified name (`"GGADMIN"."GGS_CHKPT"`) when we create each Replicat in §6.5, so it doesn't need a per-alias association either.
 
 ### 6.4 Create 4 Extracts
 
@@ -723,7 +736,7 @@ Go to **Administration Service → Extracts → Add Extract** and walk the four-
    - Auto Start: **Off**
    - Auto Restart: **Off**
 
-   > All 8 processes stay in a stopped state until §6.6 (ACDR + coordinated startup) is ready. AutoStart / AutoRestart would fight that.
+   > All 8 processes stay in a stopped state until §6.7 (ACDR) has been applied on both DCs and §6.8 (coordinated startup) runs them in the right order. AutoStart / AutoRestart would fight that.
 
 4. **Parameter File** — the wizard auto-generates the header:
 
@@ -733,14 +746,15 @@ Go to **Administration Service → Extracts → Add Extract** and walk the four-
    EXTTRAIL <trail>
    ```
 
-   In the editable box below, **append** these two lines (they're required for Active-Active and not auto-generated):
+   In the editable box below, **append** these three lines (they're required for Active-Active and not auto-generated):
 
    ```
    TRANLOGOPTIONS EXCLUDEUSER ggadmin
+   TABLEEXCLUDE APIMADMIN.GG_HEARTBEAT*;
    TABLE APIMADMIN.*;
    ```
 
-   `TRANLOGOPTIONS EXCLUDEUSER ggadmin` is the loopback filter — Extract skips any transaction whose committing session connected as `ggadmin`, and since every Replicat in §6.5 connects as `ggadmin`, Replicat-applied rows never re-capture. `TABLE APIMADMIN.*;` scopes capture to the APIM schema; the trailing semicolon is mandatory on `TABLE` directives and silently breaks things if you drop it.
+   `TRANLOGOPTIONS EXCLUDEUSER ggadmin` is the loopback filter — Extract skips any transaction whose committing session connected as `ggadmin`, and since every Replicat in §6.5 connects as `ggadmin`, Replicat-applied rows never re-capture. `TABLEEXCLUDE APIMADMIN.GG_HEARTBEAT*;` keeps the three heartbeat tables (installed by §6.2 into the `APIMADMIN` schema, not `GGADMIN`) out of the capture set — otherwise the wildcard `TABLE APIMADMIN.*;` would ship every local heartbeat write across the link, and the remote Replicat would apply them on top of the *remote* heartbeat writer, creating a bidirectional heartbeat update storm. Order matters: `TABLEEXCLUDE` must appear *before* the `TABLE` directive it filters. `TABLE APIMADMIN.*;` scopes capture to the APIM schema; the trailing semicolon is mandatory on `TABLE` / `TABLEEXCLUDE` directives and silently breaks things if you drop it.
 
 Click **Create** (not *Create and Run*). Repeat for all four Extracts. At the end of §6.4 the Extracts table should show four rows all in **STOPPED** state.
 
@@ -798,15 +812,433 @@ Go to **Administration Service → Replicats → Add Replicat** and walk the fou
 
 Click **Create** (not *Create and Run*). Repeat for all four Replicats. At the end of §6.5 the Administration Service Overview should show **4 Extracts + 4 Replicats, all in STOPPED state** — that's the checkpoint where this section ends.
 
-### 6.6 Next steps (to be added after live verification)
+### 6.6 Verify schema trandata
 
-The remaining phases of the Active-Active setup are intentionally not yet documented in this guide — they'll be folded in once they've been executed successfully against a real DC1/DC2 pair, so the runbook matches what actually works instead of what *should* work. The planned sections:
+Before we move on to ACDR, spot-check that the schema trandata you installed in §6.2 actually took effect on all four PDBs. Two gotchas to know up front:
 
-- **6.7 — Enable Automatic Conflict Detection and Resolution (ACDR)**: loop over every `APIMADMIN.*` table in each PDB on both DCs and call `DBMS_GOLDENGATE_ADM.ADD_AUTO_CDR` to add hidden timestamp and tombstone columns for latest-timestamp-wins conflict resolution. Must be applied on both DCs **before any Replicat starts** — the first cross-DC update that arrives with a hidden-column payload will fail on a target that doesn't have the column yet.
-- **6.8 — Coordinated process startup**: start all 4 Extracts first (so trail files exist on disk), then all 4 Replicats. Starting a Replicat before its source Extract has produced any trail bytes leaves it spinning in an ABENDED state trying to open a file that doesn't exist.
-- **6.9 — Round-trip replication test**: DC1 → DC2 and DC2 → DC1 on both `apim_db` and `shared_db`, using `sqlplus` updates on representative tables (`AM_APPLICATION` for apim_db, a suitable `shared_db` table for the second direction).
+1. The `Add Schema Trandata` action reports success in the UI notification drawer even if nothing was actually instrumented. On our setup it works because `apimadmin` has `DBA` + `LOGMINING` from §4.6, but it's worth confirming before every row change on ~249 `apim_db` tables depends on it.
+2. **Do not use `DBA_LOG_GROUPS` to verify.** In Oracle 12c+ (including 23ai), `ADD SCHEMATRANDATA` does *not* create explicit per-table log groups — it calls `DBMS_CAPTURE_ADM.PREPARE_SCHEMA_INSTANTIATION` under the hood, which registers the schema with LogMiner. The per-table state lands in `DBA_CAPTURE_PREPARED_TABLES` and `DBA_GOLDENGATE_SUPPORT_MODE`. Querying `DBA_LOG_GROUPS` will always come back with exactly 2 rows (explicit log groups on the `GG_HEARTBEAT` / `GG_HEARTBEAT_SEED` tables that the heartbeat step installs) and lead you to wrongly conclude trandata never installed.
 
-The surrounding sections of this guide — §Part 7 Troubleshooting, the `deployment_retry_duration` gateway tuning note, and everything before Part 6 — do not depend on §6.7–§6.9 and can be referenced now.
+Run this on **both DCs**:
+
+```bash
+docker exec -i oracle-db sqlplus -S / as sysdba <<'SQL'
+SET LINESIZE 200 PAGESIZE 100
+
+ALTER SESSION SET CONTAINER = apim_db;
+SELECT COUNT(*) prepared_tables
+  FROM dba_capture_prepared_tables WHERE table_owner='APIMADMIN';
+SELECT support_mode, COUNT(*) tables
+  FROM dba_goldengate_support_mode
+ WHERE owner='APIMADMIN' GROUP BY support_mode;
+
+ALTER SESSION SET CONTAINER = shared_db;
+SELECT COUNT(*) prepared_tables
+  FROM dba_capture_prepared_tables WHERE table_owner='APIMADMIN';
+SELECT support_mode, COUNT(*) tables
+  FROM dba_goldengate_support_mode
+ WHERE owner='APIMADMIN' GROUP BY support_mode;
+
+EXIT;
+SQL
+```
+
+Expected on both DCs:
+
+- `apim_db`: ~249 prepared tables, all in `FULL` support mode.
+- `shared_db`: ~54 prepared tables, all in `FULL` support mode.
+
+`FULL` means GoldenGate can capture and apply every column of every row from the redo stream for that table — the strongest guarantee the view reports. If you see `PL/SQL`, `ID KEY`, or `NONE` on any row, re-run `Add Schema Trandata` in the UI for the affected connection and re-query.
+
+> **If the counts come back as 0**: the Trandata step in §6.2 was skipped or silently no-op'd for that connection. Go back to DB Connections → the affected connection → Trandata → **Add Schema Trandata**, schema `APIMADMIN`, tick **All Columns**. Watch the bell-icon notification drawer for `OGG-01977 SCHEMATRANDATA for all columns has been added on schema "APIMADMIN"` — that's the success signal, not a dictionary view. Then re-run the query above.
+
+### 6.7 Enable Automatic Conflict Detection and Resolution (ACDR)
+
+ACDR adds hidden `CDRTS$ROW` (row-level timestamp) and per-column `CDRTS$<col>` columns to every PK-bearing table in `APIMADMIN`, plus registers delete-tombstone tracking. When the same row is updated on both DCs concurrently, Replicat uses the hidden timestamp to pick the winner — the later write wins. Without this, a cross-DC conflict silently corrupts one side.
+
+**Ordering rule**: ACDR must be applied on **both DCs before any Extract or Replicat starts**. If one DC fires a row change before the other has ACDR installed, the change will arrive at the remote side carrying a hidden-column payload the target doesn't have yet, and Replicat will abend on the first apply.
+
+**Tables that get skipped**: `DBMS_GOLDENGATE_ADM.ADD_AUTO_CDR` requires a primary key. Tables without a PK will be silently skipped. On a standard APIM 4.7 schema that's **4 tables in `apim_db`** (`AM_API_REVISION_METADATA`, `AM_SCOPE_BINDING`, `AM_WEBHOOKS_UNSUBSCRIPTION`, `IDN_OAUTH2_TOKEN_BINDING`) and **3 tables in `shared_db`** (`UM_ORG_ROLE_USER`, `UM_ORG_ROLE_GROUP`, `UM_ORG_ROLE_PERMISSION`). These are low-volume access-control / metadata tables — they'll still replicate via GoldenGate's all-column key-matching fallback, they just won't benefit from ACDR's latest-timestamp-wins conflict handling. Acceptable for APIM config-plane traffic.
+
+The loop below also explicitly skips `APIMADMIN.GG_HEARTBEAT*` via a `NOT LIKE` filter — those are the heartbeat tables from §6.2, and we've already kept them out of Extract capture via the `TABLEEXCLUDE` in §6.4.
+
+Run the block **on both DCs** (DC1 first, then DC2):
+
+```bash
+docker exec -i oracle-db sqlplus -S / as sysdba <<'SQL'
+SET LINESIZE 200 PAGESIZE 1000 SERVEROUTPUT ON SIZE UNLIMITED
+
+ALTER SESSION SET CONTAINER = apim_db;
+DECLARE
+  v_ok   PLS_INTEGER := 0;
+  v_err  PLS_INTEGER := 0;
+BEGIN
+  FOR r IN (
+    SELECT t.table_name FROM dba_tables t
+     WHERE t.owner='APIMADMIN'
+       AND t.table_name NOT LIKE 'GG_HEARTBEAT%'
+       AND EXISTS (SELECT 1 FROM dba_constraints c
+                    WHERE c.owner=t.owner AND c.table_name=t.table_name
+                      AND c.constraint_type='P')
+     ORDER BY t.table_name
+  ) LOOP
+    BEGIN
+      DBMS_GOLDENGATE_ADM.ADD_AUTO_CDR(
+        schema_name => 'APIMADMIN',
+        table_name  => r.table_name);
+      v_ok := v_ok + 1;
+    EXCEPTION WHEN OTHERS THEN
+      v_err := v_err + 1;
+      DBMS_OUTPUT.PUT_LINE('ERR '||r.table_name||': '||SQLERRM);
+    END;
+  END LOOP;
+  DBMS_OUTPUT.PUT_LINE('apim_db ACDR: ok='||v_ok||' errors='||v_err);
+END;
+/
+
+ALTER SESSION SET CONTAINER = shared_db;
+DECLARE
+  v_ok   PLS_INTEGER := 0;
+  v_err  PLS_INTEGER := 0;
+BEGIN
+  FOR r IN (
+    SELECT t.table_name FROM dba_tables t
+     WHERE t.owner='APIMADMIN'
+       AND t.table_name NOT LIKE 'GG_HEARTBEAT%'
+       AND EXISTS (SELECT 1 FROM dba_constraints c
+                    WHERE c.owner=t.owner AND c.table_name=t.table_name
+                      AND c.constraint_type='P')
+     ORDER BY t.table_name
+  ) LOOP
+    BEGIN
+      DBMS_GOLDENGATE_ADM.ADD_AUTO_CDR(
+        schema_name => 'APIMADMIN',
+        table_name  => r.table_name);
+      v_ok := v_ok + 1;
+    EXCEPTION WHEN OTHERS THEN
+      v_err := v_err + 1;
+      DBMS_OUTPUT.PUT_LINE('ERR '||r.table_name||': '||SQLERRM);
+    END;
+  END LOOP;
+  DBMS_OUTPUT.PUT_LINE('shared_db ACDR: ok='||v_ok||' errors='||v_err);
+END;
+/
+
+EXIT;
+SQL
+```
+
+Expected: two `PL/SQL procedure successfully completed.` lines, no `ERR` rows, and (if `DBMS_OUTPUT` surfaces — it sometimes gets swallowed by heredoc paste mangling) summary lines reading `apim_db ACDR: ok=242 errors=0` and `shared_db ACDR: ok=48 errors=0`. The verify query below is the authoritative check either way.
+
+**Verify ACDR is in place** — run on both DCs after the loop:
+
+```bash
+docker exec -i oracle-db sqlplus -S / as sysdba <<'SQL'
+SET LINESIZE 200 PAGESIZE 100
+
+ALTER SESSION SET CONTAINER = apim_db;
+SELECT COUNT(*) acdr_tables FROM dba_gg_auto_cdr_tables WHERE table_owner='APIMADMIN';
+SELECT table_name FROM dba_gg_auto_cdr_tables
+ WHERE table_owner='APIMADMIN' ORDER BY table_name FETCH FIRST 5 ROWS ONLY;
+
+ALTER SESSION SET CONTAINER = shared_db;
+SELECT COUNT(*) acdr_tables FROM dba_gg_auto_cdr_tables WHERE table_owner='APIMADMIN';
+SELECT table_name FROM dba_gg_auto_cdr_tables
+ WHERE table_owner='APIMADMIN' ORDER BY table_name FETCH FIRST 5 ROWS ONLY;
+
+EXIT;
+SQL
+```
+
+Expected: `acdr_tables = 242` on `apim_db` and `48` on `shared_db`, **identical on both DCs**. The spot-check list should show real APIM table names (`AM_ALERT_EMAILLIST`, `AM_ALERT_EMAILLIST_DETAILS`, `AM_ALERT_TYPES`, `AM_ALERT_TYPES_VALUES`, `AM_API` on `apim_db`; `REG_ASSOCIATION`, `REG_CLUSTER_LOCK`, `REG_COMMENT`, `REG_CONTENT`, `REG_CONTENT_HISTORY` on `shared_db`).
+
+> **23ai view column name gotcha**: the column in `DBA_GG_AUTO_CDR_TABLES` on 23ai is `TABLE_OWNER`, not `OWNER` or `SCHEMA_NAME`. Older Oracle docs and blog posts show the earlier column name and will give you `ORA-00904: "OWNER": invalid identifier` on 23ai.
+
+### 6.8 Register Integrated Extracts via adminclient
+
+Integrated Extracts will **not** start successfully straight after creation. The first `Start` on any of the four Extracts abends within seconds with:
+
+```
+OGG-02024  An attempt to gather information about the logmining server configuration from the Oracle database failed.
+OGG-10556  No data found when executing SQL statement
+           <SELECT apply_name FROM all_apply WHERE apply_name = SUBSTR(UPPER('OGG || :1), 1, 30)>.
+OGG-01668  PROCESS ABENDING.
+```
+
+The root cause is that every Integrated Extract needs a matching LogMiner capture process — a row in `DBA_CAPTURE` named `OGG$<EXTRACT_NAME>` — to exist in the source PDB before its first start. That row is created by running `REGISTER EXTRACT <name> DATABASE` against the Extract's target PDB via its credential alias. The GG Free 23.26 creation wizard does **not** auto-register, and the Extracts Actions menu in the web UI only exposes `Info` / `Start` / `Delete` / `Start with Options` / `Alter` — there is no **Register** action. The only way to register in GG Free 23.26 is through the `adminclient` CLI.
+
+Two adminclient-specific gotchas to know before running the commands below:
+
+1. **`http://` vs `https://`** — the ogg-hub container runs in insecure mode (see §5.1), so its Service Manager + deployment services listen on plain HTTP. Connecting adminclient with `https://localhost:9012` fails instantly with `OGG-12982 Failed to establish secure communication with a remote peer`. Use `http://` literally.
+2. **`DBLOGIN` is mandatory before each `REGISTER`** — adminclient's `CONNECT http://localhost:9012 ...` only authenticates against the deployment, not against the database. Without a prior `DBLOGIN USERIDALIAS <alias> DOMAIN OracleGoldenGate`, `REGISTER EXTRACT` errors with `Error: Not logged into database, use DBLOGIN`. Each of the four Extracts lives in a different PDB, so you issue a fresh `DBLOGIN` before each `REGISTER`.
+
+Enter the adminclient:
+
+```bash
+docker exec -it ogg-hub /u01/ogg/bin/adminclient
+```
+
+Then at the `OGG (not connected) 1>` prompt, paste the following, replacing `<oggadmin-password>` with the password from §5.2 (the one you pulled out of `docker logs ogg-hub`):
+
+```
+CONNECT http://localhost:9012 AS oggadmin PASSWORD <oggadmin-password>
+
+DBLOGIN USERIDALIAS dc1_apim DOMAIN OracleGoldenGate
+REGISTER EXTRACT EAPIM1 DATABASE
+
+DBLOGIN USERIDALIAS dc2_apim DOMAIN OracleGoldenGate
+REGISTER EXTRACT EAPIM2 DATABASE
+
+DBLOGIN USERIDALIAS dc1_shared DOMAIN OracleGoldenGate
+REGISTER EXTRACT ESHR1 DATABASE
+
+DBLOGIN USERIDALIAS dc2_shared DOMAIN OracleGoldenGate
+REGISTER EXTRACT ESHR2 DATABASE
+
+EXIT
+```
+
+Each `DBLOGIN` should print `Successfully logged into database APIM_DB` (or `SHARED_DB`) and each `REGISTER EXTRACT` should print `Extract <name> successfully registered with database` within a few seconds. If any `REGISTER EXTRACT` returns `OGG-02062 User apimadmin does not have the required privileges to use integrated capture`, go back to §4.6 — the `OGG_CAPTURE` role + `SELECT ANY DICTIONARY` + `EXECUTE ON DBMS_XSTREAM_GG` grants were missed for that PDB. Re-run just those three GRANT statements on the failing PDB, then retry the `REGISTER`.
+
+**Verify from the database side** — run on **both DCs**, expect each PDB to show exactly one `OGG$<name>` capture process in `LOCAL` / `DISABLED` state (it flips to `ENABLED` in §6.9 once the corresponding Extract actually starts):
+
+```bash
+docker exec -i oracle-db sqlplus -S / as sysdba <<'SQL'
+SET LINESIZE 200 PAGESIZE 100
+ALTER SESSION SET CONTAINER = apim_db;
+SELECT capture_name, status, capture_type FROM dba_capture;
+ALTER SESSION SET CONTAINER = shared_db;
+SELECT capture_name, status, capture_type FROM dba_capture;
+EXIT;
+SQL
+```
+
+Expected:
+
+- **DC1** — `apim_db`: `OGG$EAPIM1 / DISABLED / LOCAL`; `shared_db`: `OGG$ESHR1 / DISABLED / LOCAL`.
+- **DC2** — `apim_db`: `OGG$EAPIM2 / DISABLED / LOCAL`; `shared_db`: `OGG$ESHR2 / DISABLED / LOCAL`.
+
+If all four rows are present with the right names, registration is complete and you can move on to the coordinated startup.
+
+### 6.9 Coordinated process startup
+
+Start the 8 processes in a specific order: **all 4 Extracts first, then all 4 Replicats.** Starting a Replicat before its source Extract has had a chance to write any trail bytes leaves the Replicat abending because the trail file doesn't exist yet. Extracts, conversely, can start in any order relative to each other.
+
+**Extracts first** — Administration Service → **Extracts** → click the play (Start) icon on each in turn: `EAPIM1`, `EAPIM2`, `ESHR1`, `ESHR2`. Wait for each to reach **Running** before starting the next. Within a minute of each one going Running you should see two signals:
+
+- The Extracts list shows `Heartbeat Lag` and `Heartbeat Age` populating in seconds (not empty, not "stale"). A healthy steady-state is `Heartbeat Lag` < 10 s and `Heartbeat Age` < 60 s per Extract.
+- On the corresponding DC, the `DBA_CAPTURE` row for that Extract flips from `DISABLED` to `ENABLED`:
+
+  ```sql
+  ALTER SESSION SET CONTAINER = apim_db;
+  SELECT capture_name, status FROM dba_capture;
+  ```
+
+If any Extract goes **Abended** on start, open its `Report` tab from the Actions menu and read the `OGG-` error at the bottom. With §6.8 registration done and §6.7 ACDR in place, the next most likely failure mode is archived log availability — Extract failing to position on an SCN because the archived log for that SCN has already been cleaned up. Look for `OGG-00446` or `OGG-01028`, and if you see it, the fix is to either run `ALTER SYSTEM ARCHIVE LOG CURRENT;` inside the PDB or to recreate the Extract with a later `Begin Now` position.
+
+**Replicats next** — same pattern, Administration Service → **Replicats** → play icon on `RAPM1`, `RAPM2`, `RSHR1`, `RSHR2`, one at a time. Wait for Running before starting the next. Healthy state is the same: heartbeat lag in single-digit seconds, heartbeat age under a minute. A short burst of elevated lag (20–60 s) on first start is normal — the Replicat is catching up on whatever trail the Extract wrote while the Replicat was still stopped.
+
+Common Replicat abend-on-start causes, in order of likelihood:
+
+1. **Heartbeat warning on the Replicat detail page** → you skipped **Heartbeat → Add Heartbeat Table** on one of the `_gg` connections in §6.3. This doesn't cause an abend, but it does silently disable end-to-end lag reporting for that Replicat. Fix the `_gg` connection, refresh, and restart.
+2. **`OGG-01211 Unable to acquire checkpoint record for ...`** → the checkpoint table pre-populated in the Replicat wizard (§6.5) got typed wrong. It must be `"GGADMIN"."GGS_CHKPT"` exactly.
+3. **`OGG-01296 Error mapping from SYS.TABLE to SYS.TABLE`** → the parameter file `MAP *.*, TARGET *.*;` default wasn't replaced with `MAP APIMADMIN.*, TARGET APIMADMIN.*;` in §6.5. Stop the Replicat, Alter → edit the param file, restart.
+
+At the end of §6.9 the Administration Service Overview should show **4 Extracts Running + 4 Replicats Running** with all 8 heartbeat lag values under 10 s. That's the "live" state — §6.10 is the functional proof.
+
+### 6.10 Round-trip replication test
+
+Four tests, two tables, both directions: INSERT on one DC, SELECT on the opposite DC, DELETE to clean up. We use two low-volume tables that already exist in the APIM schemas and have auto-assigned PKs via `BEFORE INSERT` triggers — `apimadmin.am_alert_types` for `apim_db` and `apimadmin.reg_log` for `shared_db`.
+
+> **The PKs you see on each DC will be *different* numbers for the seed data and *identical* numbers for your test inserts — that's expected, and it's the single cleanest signal that active-active is working correctly.** The WSO2 DC1 and DC2 schema packs (`dbscripts/dc1/Oracle/sequences_23c.sql` vs `dbscripts/dc2/Oracle/sequences_23c.sql`) create every `_SEQUENCE` with `START WITH 1 INCREMENT BY 2 NOCACHE` on DC1 and `START WITH 2 INCREMENT BY 2 NOCACHE` on DC2, so DC1 hands out odd PKs and DC2 hands out even PKs — a classic active-active trick to prevent new-row PK collisions on independently-issued inserts. But when GoldenGate Parallel Nonintegrated Replicat applies a captured INSERT on the target side, it supplies the PK value explicitly from the trail and the target-side trigger does **not** re-fire or overwrite it (23ai suppresses triggers on Replicat-owned sessions by default). So a row inserted on DC1 at odd PK `15` lands on DC2 at PK `15` too, even though DC2's own sequence never produces odd numbers. If the test-inserted PKs ever diverge between the two DCs, that's your signal that trigger suppression isn't working and you'd need `DBOPTIONS SUPPRESSTRIGGERS` on all four Replicats — but on this GG Free 23.26 + 23ai stack, it Just Works out of the box.
+
+#### Test 1 — DC1 → DC2 on apim_db
+
+**Step A**, on **DC1** (`apim-4-7-eus1-oracle`):
+
+```bash
+docker exec -i oracle-db sqlplus -S / as sysdba <<'SQL'
+ALTER SESSION SET CONTAINER = apim_db;
+INSERT INTO apimadmin.am_alert_types (alert_type_name, stake_holder)
+VALUES ('test-dc1', 'publisher');
+COMMIT;
+SELECT alert_type_id, alert_type_name, stake_holder
+  FROM apimadmin.am_alert_types WHERE alert_type_name = 'test-dc1';
+EXIT;
+SQL
+```
+
+Note the `ALERT_TYPE_ID` the trigger assigned — it will be the next odd number after the seeded rows (typically `15`). Omit `alert_type_id` from the INSERT column list deliberately: the trigger unconditionally overrides any literal you supply, so there is no benefit to passing one.
+
+**Step B**, wait ~3 seconds, then on **DC2** (`apim-4-7-wus2-oracle`):
+
+```bash
+docker exec -i oracle-db sqlplus -S / as sysdba <<'SQL'
+ALTER SESSION SET CONTAINER = apim_db;
+SELECT alert_type_id, alert_type_name, stake_holder
+  FROM apimadmin.am_alert_types WHERE alert_type_name = 'test-dc1';
+EXIT;
+SQL
+```
+
+Expected: DC2 returns the same row with the **same** `ALERT_TYPE_ID` DC1 reported. If so, DC1 → DC2 replication is working on `apim_db`.
+
+**Step C — cleanup**, on **DC1**:
+
+```bash
+docker exec -i oracle-db sqlplus -S / as sysdba <<'SQL'
+ALTER SESSION SET CONTAINER = apim_db;
+DELETE FROM apimadmin.am_alert_types WHERE alert_type_name = 'test-dc1';
+COMMIT;
+SELECT COUNT(*) FROM apimadmin.am_alert_types WHERE alert_type_name = 'test-dc1';
+EXIT;
+SQL
+```
+
+Expected count on DC1: `0`. Wait ~3 s and re-run the same `SELECT COUNT(*)` on **DC2** — it should also return `0`, which doubles as a DC1 → DC2 DELETE-replication check.
+
+#### Test 2 — DC2 → DC1 on apim_db
+
+**Step A**, on **DC2**:
+
+```bash
+docker exec -i oracle-db sqlplus -S / as sysdba <<'SQL'
+ALTER SESSION SET CONTAINER = apim_db;
+INSERT INTO apimadmin.am_alert_types (alert_type_name, stake_holder)
+VALUES ('test-dc2', 'publisher');
+COMMIT;
+SELECT alert_type_id, alert_type_name, stake_holder
+  FROM apimadmin.am_alert_types WHERE alert_type_name = 'test-dc2';
+EXIT;
+SQL
+```
+
+Note the PK — this time it will be an **even** number (typically `16`), because DC2's `AM_ALERT_TYPES` sequence starts at 2 and increments by 2.
+
+**Step B**, on **DC1**:
+
+```bash
+docker exec -i oracle-db sqlplus -S / as sysdba <<'SQL'
+ALTER SESSION SET CONTAINER = apim_db;
+SELECT alert_type_id, alert_type_name, stake_holder
+  FROM apimadmin.am_alert_types WHERE alert_type_name = 'test-dc2';
+EXIT;
+SQL
+```
+
+Expected: DC1 shows the same row with the even-numbered PK — even though DC1's own sequence only hands out odd numbers, confirming the trail-supplied PK is being preserved by the Replicat.
+
+**Step C — cleanup**, on **DC2**:
+
+```bash
+docker exec -i oracle-db sqlplus -S / as sysdba <<'SQL'
+ALTER SESSION SET CONTAINER = apim_db;
+DELETE FROM apimadmin.am_alert_types WHERE alert_type_name = 'test-dc2';
+COMMIT;
+EXIT;
+SQL
+```
+
+Re-check on **DC1** that the row is gone.
+
+#### Test 3 — DC1 → DC2 on shared_db
+
+`REG_LOG` is the registry audit table — it's append-only by design, has a composite PK `(REG_LOG_ID, REG_TENANT_ID)` with `REG_LOG_ID` auto-assigned from `REG_LOG_SEQUENCE` by a `BEFORE INSERT` trigger, and no other tables have foreign keys pointing at it, so arbitrary test rows are safe to insert and remove. We use `REG_TENANT_ID = -1234` and a distinctive `REG_USER_ID = 'ogg-test-dc1'` so the test rows are trivially isolatable from real audit traffic.
+
+**Step A**, on **DC1**:
+
+```bash
+docker exec -i oracle-db sqlplus -S / as sysdba <<'SQL'
+ALTER SESSION SET CONTAINER = shared_db;
+INSERT INTO apimadmin.reg_log
+  (reg_path, reg_user_id, reg_logged_time, reg_action, reg_action_data, reg_tenant_id)
+VALUES
+  ('/test/round-trip', 'ogg-test-dc1', SYSTIMESTAMP, 0, 'acdr-round-trip', -1234);
+COMMIT;
+SELECT reg_log_id, reg_user_id, reg_tenant_id
+  FROM apimadmin.reg_log WHERE reg_user_id = 'ogg-test-dc1';
+EXIT;
+SQL
+```
+
+Note the `REG_LOG_ID` — it will be an odd number from DC1's `REG_LOG_SEQUENCE`.
+
+**Step B**, on **DC2**:
+
+```bash
+docker exec -i oracle-db sqlplus -S / as sysdba <<'SQL'
+ALTER SESSION SET CONTAINER = shared_db;
+SELECT reg_log_id, reg_user_id, reg_tenant_id
+  FROM apimadmin.reg_log WHERE reg_user_id = 'ogg-test-dc1';
+EXIT;
+SQL
+```
+
+Expected: same row, same `REG_LOG_ID`, same `REG_TENANT_ID = -1234`.
+
+**Step C — cleanup**, on **DC1**:
+
+```bash
+docker exec -i oracle-db sqlplus -S / as sysdba <<'SQL'
+ALTER SESSION SET CONTAINER = shared_db;
+DELETE FROM apimadmin.reg_log WHERE reg_user_id = 'ogg-test-dc1';
+COMMIT;
+EXIT;
+SQL
+```
+
+#### Test 4 — DC2 → DC1 on shared_db
+
+**Step A**, on **DC2**:
+
+```bash
+docker exec -i oracle-db sqlplus -S / as sysdba <<'SQL'
+ALTER SESSION SET CONTAINER = shared_db;
+INSERT INTO apimadmin.reg_log
+  (reg_path, reg_user_id, reg_logged_time, reg_action, reg_action_data, reg_tenant_id)
+VALUES
+  ('/test/round-trip', 'ogg-test-dc2', SYSTIMESTAMP, 0, 'acdr-round-trip', -1234);
+COMMIT;
+SELECT reg_log_id, reg_user_id, reg_tenant_id
+  FROM apimadmin.reg_log WHERE reg_user_id = 'ogg-test-dc2';
+EXIT;
+SQL
+```
+
+**Step B**, on **DC1**:
+
+```bash
+docker exec -i oracle-db sqlplus -S / as sysdba <<'SQL'
+ALTER SESSION SET CONTAINER = shared_db;
+SELECT reg_log_id, reg_user_id, reg_tenant_id
+  FROM apimadmin.reg_log WHERE reg_user_id = 'ogg-test-dc2';
+EXIT;
+SQL
+```
+
+Expected: same row, even-numbered `REG_LOG_ID` (from DC2's sequence).
+
+**Step C — cleanup**, on **DC2**:
+
+```bash
+docker exec -i oracle-db sqlplus -S / as sysdba <<'SQL'
+ALTER SESSION SET CONTAINER = shared_db;
+DELETE FROM apimadmin.reg_log WHERE reg_user_id = 'ogg-test-dc2';
+COMMIT;
+EXIT;
+SQL
+```
+
+#### What "success" looks like
+
+All four tests show the row landing on the opposite DC within ~2 s carrying the same PK the source side reported. All four cleanups replicate back within ~2 s. At the end of §6.10 both DCs are in the same state they were at the start of the section, and the GG Administration Service Overview still shows 4 Extracts + 4 Replicats Running with single-digit heartbeat lag.
+
+If any of the `Step B` SELECTs returns no row (or returns a different PK), investigate in this order:
+
+1. **Check the relevant Replicat in the UI** — `RAPM1`/`RAPM2` for `apim_db` tests, `RSHR1`/`RSHR2` for `shared_db` tests. Confirm status is still `Running` and heartbeat lag hasn't ballooned.
+2. **Open that Replicat's Report tab** — any `OGG-` error near the bottom is the authoritative cause. The last SCN printed is what the Replicat is waiting on.
+3. **Cross-check the matching Extract's Report tab** — confirm the source-side row change shows up as a captured record (Extract's "total captured" counter should have incremented since `Step A`).
+4. If 1–3 all look healthy but the row still isn't on the target, fall back to `DBA_CAPTURE_PROCESSES` + `DBA_APPLY_ERROR` inside sqlplus on both sides to see whether a conflict landed in a discards queue.
 
 ---
 
@@ -868,15 +1300,19 @@ wso2:
         deployment_retry_duration = 30000
 ```
 
-Start at 30000 (30 s). If the round-trip replication in §6.3 routinely exceeds 30 s under load, raise it to 60000. The value is read at gateway startup, so `helm upgrade` followed by a gateway pod rollout is required to pick up the change.
+Start at 30000 (30 s). If the round-trip replication in §6.10 routinely exceeds 30 s under load, raise it to 60000. The value is read at gateway startup, so `helm upgrade` followed by a gateway pod rollout is required to pick up the change.
 
-**Verification.** Re-run the round-trip test from §6.3 on `apim_db` to confirm replication is healthy, then publish an API from the DC1 publisher and watch the DC2 gateway pod logs — the `Storage returned null` error should no longer appear, and the API should be reachable through the DC2 gateway within the retry window.
+**Verification.** Re-run the round-trip test from §6.10 on `apim_db` to confirm replication is healthy, then publish an API from the DC1 publisher and watch the DC2 gateway pod logs — the `Storage returned null` error should no longer appear, and the API should be reachable through the DC2 gateway within the retry window.
 
-### OGG Free web UI
+### OGG Free Administration Service & adminclient
 
-- Pipeline stuck in **ERROR**: click the pipeline → **Logs** tab → copy the error string. The most common causes are: missing ACDR metadata on a table that was added after pipeline start (stop the pipeline, reopen the Mapping step, re-enable ACDR, start), and DB connectivity (run `nc -zv` from the DC1 VM to the target DC's port 1521).
-- Pipeline status returns to **RUNNING** after a transient issue — no manual intervention needed once the underlying DB is reachable again.
-- Forgot the `oggadmin` UI password: `docker exec -it ogg-hub /u01/app/ogg/bin/adminclient` provides a local CLI, or tear down and recreate the container (the pipelines are stored on the named volume and survive, but credentials do not).
+- **Extract abends on first start with `OGG-02024` / `OGG-10556` / `OGG-01668`** (`BOUNDED RECOVERY`, `LogMiner session could not be started`, `missing LogMiner capture process`). Integrated Extracts must be *registered* with the source DB before first start, and the 23.26 Administration Service UI does **not** auto-register them — the Actions menu only exposes `Info / Start / Start with Options / Alter / Delete`, no `Register` action. Follow §6.8 to register via `adminclient`. Verify from the DB side with `SELECT capture_name, status FROM dba_capture;` inside the relevant PDB — if the `OGG$<name>` row is missing, the Extract is unregistered.
+- **`OGG-12982 Failed to establish secure communication`** when `adminclient` tries to `CONNECT` — you used `https://` against an **insecure** deployment. GG Free 23.26 is started in insecure mode in §5.1, so `adminclient` must connect with `CONNECT http://localhost:9012 AS oggadmin PASSWORD <pw>`. The `http://` is mandatory.
+- **`OGG-02062 User apimadmin does not have the required privileges to use integrated capture`** on `REGISTER EXTRACT`. The direct `GRANT EXECUTE ON DBMS_CAPTURE_ADM` / `DBMS_APPLY_ADM` / `DBMS_STREAMS_ADM` grants in §4.6 cover package access but do **not** satisfy integrated capture's role check. The Oracle 23ai fix is to grant the built-in `OGG_CAPTURE` role plus `SELECT ANY DICTIONARY` and `EXECUTE ON DBMS_XSTREAM_GG` (§4.6 includes this block). Note that the older `DBMS_GOLDENGATE_ADM.GRANT_ADMIN_PRIVILEGE` wrapper also does not work — same `OGG-02062` downstream.
+- **`adminclient` path**: the binary lives at `/u01/ogg/bin/adminclient` inside the `ogg-hub` container. `docker exec -it ogg-hub /u01/ogg/bin/adminclient` drops you at an `OGG (not connected)` prompt. `DBLOGIN USERIDALIAS <alias> DOMAIN OracleGoldenGate` is mandatory before each `REGISTER EXTRACT` — adminclient's HTTP-connected state has no DB session attached.
+- **Replicat heartbeat warning** *"Heartbeat table is not enabled for credentials: 'OracleGoldenGate-<alias>_gg'"*: heartbeat enablement is tracked **per credential alias** in the UI metadata, not per physical table. Enable heartbeat on all 4 `_gg` connections in §6.3 — the underlying `GG_HEARTBEAT*` tables already exist in `APIMADMIN` from §6.2, so this is a no-op on the DB side but clears the UI warning and re-enables end-to-end lag reporting.
+- **Extract/Replicat returns to `Running` after a transient issue** — no manual intervention needed once the underlying DB is reachable again. The Managed Options profile handles restart-on-failure.
+- **Forgot the `oggadmin` UI password**: `docker exec -it ogg-hub /u01/ogg/bin/adminclient` provides a local CLI, or tear down and recreate the container (the processes are stored on the named volume and survive, but credentials do not).
 
 ### Hard reset of a DB container (data loss)
 
@@ -888,7 +1324,7 @@ docker volume rm oracle-db-data
 # Then re-run Part 3 (start container) and Part 4 (PDBs + schemas + GG prereqs)
 ```
 
-Any existing pipelines will stop replicating from that DC because the source/target PDB is gone. Re-run their Mapping step after the PDBs exist again, then Start.
+Any existing Extracts/Replicats will abend because the source/target PDB is gone. After recreating the PDBs, re-run §4.6 (grants for `ggadmin` and `apimadmin`), §6.2 (checkpoint + trandata + heartbeat), §6.7 (ACDR), and §6.8 (re-register the Integrated Extract on that DC) before restarting the processes.
 
 ### Drop and recreate a single PDB
 
@@ -911,5 +1347,5 @@ Then re-run the `CREATE PLUGGABLE DATABASE` + grants + schema-load steps from Pa
 3. **DB containers (Part 3)** — `docker run` the `oracle-db` container on both VMs with `--network host`, `-e ORACLE_PWD=Apim@123`, and a named volume; wait for `DATABASE IS READY TO USE!`.
 4. **Schemas (Part 4)** — create `apim_db` + `shared_db` PDBs, create `apimadmin` with grants, enable archive log + force logging + supplemental logging + `enable_goldengate_replication`, load `dbscripts/dc1/Oracle/` on DC1 and `dbscripts/dc2/Oracle/` on DC2 as-is, then create `ggadmin` per PDB with the direct-grants workaround for `ORA-26988` and grant `LOGMINING` to `apimadmin`.
 5. **OGG container (Part 5)** — `docker run` `ogg-hub` on DC1 with `/u02` volume and insecure mode, grab the initial admin password from the logs, SSH-tunnel ports 8011 (→ 9011) plus 9012–9015 to reach Service Manager + the four deployment services, navigate into `Deployments → Local → Administration Service`.
-6. **Active-Active topology (Part 6)** — §6.1 create 4 `apimadmin` DB connections, §6.2 install checkpoint (`GGADMIN.GGS_CHKPT`) + schema trandata (`APIMADMIN`, All Columns) + heartbeat on each, §6.3 create 4 `ggadmin` (`*_gg`) DB connections, §6.4 create 4 Integrated Extracts (`EAPIM1/2`, `ESHR1/2`) with `TRANLOGOPTIONS EXCLUDEUSER ggadmin` and `TABLE APIMADMIN.*;`, §6.5 create 4 Parallel Nonintegrated Replicats (`RAPM1/2`, `RSHR1/2`) with `MAP APIMADMIN.*, TARGET APIMADMIN.*;` — all 8 processes created in STOPPED state. §6.6 (ACDR, startup, verification) is a stub pending live verification.
+6. **Active-Active topology (Part 6)** — §6.1 create 4 `apimadmin` DB connections, §6.2 install checkpoint (`GGADMIN.GGS_CHKPT`) + schema trandata (`APIMADMIN`, All Columns) + heartbeat on each (heartbeat tables land in `APIMADMIN`, not `GGADMIN`), §6.3 create 4 `ggadmin` (`*_gg`) DB connections and enable heartbeat on all four (checkpoint and trandata are not needed on `_gg` connections — heartbeat is tracked per credential alias), §6.4 create 4 Integrated Extracts (`EAPIM1/2`, `ESHR1/2`) with `TRANLOGOPTIONS EXCLUDEUSER ggadmin`, `TABLEEXCLUDE APIMADMIN.GG_HEARTBEAT*;`, and `TABLE APIMADMIN.*;`, §6.5 create 4 Parallel Nonintegrated Replicats (`RAPM1/2`, `RSHR1/2`) with `MAP APIMADMIN.*, TARGET APIMADMIN.*;` — all 8 processes created in STOPPED state, §6.6 verify schema trandata via `DBA_CAPTURE_PREPARED_TABLES` / `DBA_GOLDENGATE_SUPPORT_MODE` (not `DBA_LOG_GROUPS`), §6.7 apply ACDR on both DCs with `DBMS_GOLDENGATE_ADM.ADD_AUTO_CDR` (242 `apim_db` + 48 `shared_db`), §6.8 register the 4 Integrated Extracts from `adminclient` with `CONNECT http://localhost:9012` + `DBLOGIN USERIDALIAS ... DOMAIN OracleGoldenGate` + `REGISTER EXTRACT <name> DATABASE` so `DBA_CAPTURE` gets the `OGG$<name>` row each Extract needs to attach, §6.9 coordinated startup (all 4 Extracts first, then all 4 Replicats) with heartbeat lag < 10 s as the healthy signal, §6.10 four-test round-trip verification (INSERT + SELECT + DELETE on `AM_ALERT_TYPES` / `REG_LOG`) in both directions across both PDBs, with the identical trail-supplied PK on both DCs as the proof that active-active is live.
 7. **Operate (Part 7)** — `docker logs`, `docker restart`, restart a stopped Extract/Replicat from the Administration Service UI, hard-reset the DB volume only as a last resort.
