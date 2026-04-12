@@ -347,13 +347,19 @@ ALTER SESSION SET CONTAINER = CDB$ROOT;
 
 > **Why `DBA` on an app user?** This is a lab shortcut — it lets the WSO2 schema scripts create objects without chasing individual system privileges. For production, grant the narrower privilege set documented in the WSO2 installation guide.
 
-### 4.2 Enable archive log mode, supplemental logging, and GoldenGate replication
+### 4.2 Enable archive log mode, supplemental logging, GoldenGate replication, and bump PROCESSES
 
 These are CDB-level settings required by GoldenGate. Run **on both DC1 and DC2**, still inside `sqlplus / as sysdba`:
 
 > **Important:** these statements run against the **DB container** (the `docker exec -it oracle-db sqlplus / as sysdba` session from §4.1), not against the OGG container or OGG web UI. A prior implementer tried to run the archive-log sequence from the OGG side and it did not work — enabling archive logging has to happen on the database itself.
 
+> **Why `PROCESSES = 1000` up front?** Oracle Database 23ai Free ships with a default `PROCESSES` ceiling of **200**. Under the full APIM 4.7 multi-DC load that is not enough: each APIM pod opens JDBC pools against *both* `apim_db` and `shared_db`, you're running 6 APIM pods per DC, plus the GG Extract LogMiner capture sessions and the incoming Replicat apply sessions from the opposite DC, plus Extract's transient "fetch from source" connections when redo is incomplete. In one previous run without this bump we watched `v$resource_limit.max_utilization` reach 199/200 shortly after APIM started and Extract `EAPIM1` immediately abended with `ORA-12537: TNS:connection closed` when it tried to open a fetch-from-source connection (`OGG-02615 Login to the database as user apimadmin failed because of error ORA-12537`). `PROCESSES` is a **static** parameter — it only takes effect after an instance bounce — so we set it *before* the `SHUTDOWN IMMEDIATE` below, and the archive-log bounce picks it up for free with no second restart needed. `SESSIONS` is derived automatically as `(1.5 * PROCESSES) + 22` → 1522.
+
 ```sql
+-- Static parameter bump — picked up by the SHUTDOWN/STARTUP below.
+-- Default 200 saturates under APIM + GG load; see the note above §4.2.
+ALTER SYSTEM SET PROCESSES=1000 SCOPE=SPFILE;
+
 -- Enable archive log mode (required for Extract to mine redo)
 SHUTDOWN IMMEDIATE;
 STARTUP MOUNT;
@@ -373,10 +379,14 @@ ALTER SYSTEM SET ENABLE_GOLDENGATE_REPLICATION = TRUE SCOPE=BOTH;
 -- Verify
 SELECT LOG_MODE, FORCE_LOGGING, SUPPLEMENTAL_LOG_DATA_MIN FROM V$DATABASE;
 SHOW PARAMETER ENABLE_GOLDENGATE_REPLICATION;
+SHOW PARAMETER PROCESSES;
+SHOW PARAMETER SESSIONS;
 EXIT;
 ```
 
-Expected: `LOG_MODE = ARCHIVELOG`, `FORCE_LOGGING = YES`, `SUPPLEMENTAL_LOG_DATA_MIN = YES`, `enable_goldengate_replication = TRUE`.
+Expected: `LOG_MODE = ARCHIVELOG`, `FORCE_LOGGING = YES`, `SUPPLEMENTAL_LOG_DATA_MIN = YES`, `enable_goldengate_replication = TRUE`, `processes = 1000`, `sessions = 1522`.
+
+> **If you forgot to bump `PROCESSES` before starting APIM** and you hit `ORA-12537` Extract abends after APIM pods came up, the in-place fix is: `ALTER SYSTEM SET PROCESSES=1000 SCOPE=SPFILE; SHUTDOWN IMMEDIATE; STARTUP;` inside the running `oracle-db` container, then restart the abended Extracts from the Administration Service UI. The APIM pods survive the DB bounce (their JDBC pools reconnect automatically) but you will lose a few seconds of replication traffic — the subsequent ACDR round trip is what you use to confirm nothing was dropped.
 
 ### 4.3 Load the APIM schemas from the pre-customized DC packs
 
@@ -1345,7 +1355,7 @@ Then re-run the `CREATE PLUGGABLE DATABASE` + grants + schema-load steps from Pa
 1. **Provision (Part 1)** — 2 Ubuntu 22.04 VMs (`apim-4-7-eus1-oracle`, `apim-4-7-wus2-oracle`), NSG rules for 1521 on both VMs, VNet peering.
 2. **Docker (Part 2)** — install `docker.io`, accept Oracle CR terms in a browser once, `docker login` and pull `database/free` on both VMs plus `goldengate/goldengate-oracle-free` on DC1.
 3. **DB containers (Part 3)** — `docker run` the `oracle-db` container on both VMs with `--network host`, `-e ORACLE_PWD=Apim@123`, and a named volume; wait for `DATABASE IS READY TO USE!`.
-4. **Schemas (Part 4)** — create `apim_db` + `shared_db` PDBs, create `apimadmin` with grants, enable archive log + force logging + supplemental logging + `enable_goldengate_replication`, load `dbscripts/dc1/Oracle/` on DC1 and `dbscripts/dc2/Oracle/` on DC2 as-is, then create `ggadmin` per PDB with the direct-grants workaround for `ORA-26988` and grant `LOGMINING` to `apimadmin`.
+4. **Schemas (Part 4)** — create `apim_db` + `shared_db` PDBs, create `apimadmin` with grants, bump `PROCESSES` from the 200 default to 1000 (static — piggy-backs on the archive-log bounce), enable archive log + force logging + supplemental logging + `enable_goldengate_replication`, load `dbscripts/dc1/Oracle/` on DC1 and `dbscripts/dc2/Oracle/` on DC2 as-is, then create `ggadmin` per PDB with the direct-grants workaround for `ORA-26988` and grant `LOGMINING` + `OGG_CAPTURE` to `apimadmin`.
 5. **OGG container (Part 5)** — `docker run` `ogg-hub` on DC1 with `/u02` volume and insecure mode, grab the initial admin password from the logs, SSH-tunnel ports 8011 (→ 9011) plus 9012–9015 to reach Service Manager + the four deployment services, navigate into `Deployments → Local → Administration Service`.
 6. **Active-Active topology (Part 6)** — §6.1 create 4 `apimadmin` DB connections, §6.2 install checkpoint (`GGADMIN.GGS_CHKPT`) + schema trandata (`APIMADMIN`, All Columns) + heartbeat on each (heartbeat tables land in `APIMADMIN`, not `GGADMIN`), §6.3 create 4 `ggadmin` (`*_gg`) DB connections and enable heartbeat on all four (checkpoint and trandata are not needed on `_gg` connections — heartbeat is tracked per credential alias), §6.4 create 4 Integrated Extracts (`EAPIM1/2`, `ESHR1/2`) with `TRANLOGOPTIONS EXCLUDEUSER ggadmin`, `TABLEEXCLUDE APIMADMIN.GG_HEARTBEAT*;`, and `TABLE APIMADMIN.*;`, §6.5 create 4 Parallel Nonintegrated Replicats (`RAPM1/2`, `RSHR1/2`) with `MAP APIMADMIN.*, TARGET APIMADMIN.*;` — all 8 processes created in STOPPED state, §6.6 verify schema trandata via `DBA_CAPTURE_PREPARED_TABLES` / `DBA_GOLDENGATE_SUPPORT_MODE` (not `DBA_LOG_GROUPS`), §6.7 apply ACDR on both DCs with `DBMS_GOLDENGATE_ADM.ADD_AUTO_CDR` (242 `apim_db` + 48 `shared_db`), §6.8 register the 4 Integrated Extracts from `adminclient` with `CONNECT http://localhost:9012` + `DBLOGIN USERIDALIAS ... DOMAIN OracleGoldenGate` + `REGISTER EXTRACT <name> DATABASE` so `DBA_CAPTURE` gets the `OGG$<name>` row each Extract needs to attach, §6.9 coordinated startup (all 4 Extracts first, then all 4 Replicats) with heartbeat lag < 10 s as the healthy signal, §6.10 four-test round-trip verification (INSERT + SELECT + DELETE on `AM_ALERT_TYPES` / `REG_LOG`) in both directions across both PDBs, with the identical trail-supplied PK on both DCs as the proof that active-active is live.
 7. **Operate (Part 7)** — `docker logs`, `docker restart`, restart a stopped Extract/Replicat from the Administration Service UI, hard-reset the DB volume only as a last resort.

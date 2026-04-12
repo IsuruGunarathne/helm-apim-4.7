@@ -62,13 +62,13 @@ wso2:
         apim_db:
           url: "jdbc:oracle:thin:@//10.1.4.4:1521/apim_db"
           username: "apimadmin"
-          password: "DATABASE_PASSWORD"
+          password: "Apim@123"
           poolParameters:
             validationQuery: "SELECT 1 FROM DUAL"
         shared_db:
           url: "jdbc:oracle:thin:@//10.1.4.4:1521/shared_db"
           username: "apimadmin"
-          password: "DATABASE_PASSWORD"
+          password: "Apim@123"
           poolParameters:
             validationQuery: "SELECT 1 FROM DUAL"
       km:
