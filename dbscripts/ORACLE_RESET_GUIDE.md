@@ -7,43 +7,23 @@ Reset the entire Oracle + GoldenGate stack back to an empty state so you can re-
 These are deliberately *not* touched — re-provisioning them is slow and they don't carry any application or replication state:
 
 - Azure VMs (`apim-4-7-eus1-oracle`, `apim-4-7-wus2-oracle`) and networking — NSGs, VNet peering, jump-box hops from Part 1 of the main guide.
-- Docker daemon and Oracle Container Registry credentials from Part 2.
-- The `oracle-db` container itself, its `oracle-db-data` volume, and all **CDB-level** settings applied in §4.2 of the main guide: `ARCHIVELOG` mode, `FORCE_LOGGING`, minimum supplemental logging, `enable_goldengate_replication`, and the `PROCESSES = 1000` / `SESSIONS = 1522` tuning. These all live in the CDB (SPFILE + control file) and survive a PDB drop.
-- The CDB root user `sys` and its password.
+- Docker daemon, Oracle Container Registry credentials, and the cached Docker images (`oracle-free:23`, `goldengate-oracle-free:latest`) from Parts 2–3. Re-downloading multi-GB images is slow and OCR rate-limits pulls; keeping the image cache is free.
 
 ## What this nukes
 
 In order:
 
 1. **APIM Helm releases** on both Kubernetes clusters (`cp`, `gw`, `tm`).
-2. **The entire `ogg-hub` container + its `ogg-hub-data` volume on DC1** — this deletes the Local deployment, all 8 DB Connections, all 4 Extracts, all 4 Replicats, trail files `aa` / `ab` / `ba` / `bb`, checkpoint table registrations, schema-trandata associations, heartbeat table installs, credential wallet, and the random `oggadmin` UI password. There is no surgical "just delete the processes" path in GG Free 23.26 that's worth the UI clicks — nuking the container is faster and gives you the same end state.
-3. **The `apim_db` and `shared_db` PDBs** on *both* DC1 and DC2 — this deletes the `APIMADMIN` and `GGADMIN` schemas, all APIM tables and data, the ACDR hidden-column bookkeeping (`CDRTS$ROW` / per-column `CDRTS$<col>` / tombstone tracking), the checkpoint tables, the heartbeat tables, the `DBA_CAPTURE` rows for `OGG$EAPIM1` / `OGG$EAPIM2` / `OGG$ESHR1` / `OGG$ESHR2` registered in §6.8 of the main guide, and every privilege grant made in §4.1 / §4.6.
+2. **The entire `ogg-hub` container + its `ogg-hub-data` volume on DC1** — deletes the Local deployment, all 8 DB Connections, all 4 Extracts, all 4 Replicats, trail files, checkpoint registrations, schema-trandata associations, heartbeat tables, credential wallet, and the random `oggadmin` UI password.
+3. **The `oracle-db` container + its `oracle-db-data` volume on *both* DC1 and DC2** — deletes the CDB itself and everything inside it: the `apim_db` and `shared_db` PDBs, the `APIMADMIN` and `GGADMIN` schemas, all APIM tables and data, ACDR hidden-column bookkeeping, checkpoint tables, heartbeat tables, registered Extracts, and every privilege grant. Also wipes the CDB-level SPFILE settings from §4.2 (archive log mode, supplemental logging, `enable_goldengate_replication`, `PROCESSES = 1000`) — those get re-applied on the next run.
 
-At the end of this guide, the only "APIM-aware" state left on either VM is the CDB itself — which is exactly the point §4.1 of the main guide starts from.
-
-## Connection details
-
-Same as the main guide; reproduced here so you don't need to flip between tabs. Replace the password if you changed the default in your deployment.
-
-```bash
-# DC1 — East US 1 (Oracle DB + OGG)
-export DC1_HOST=10.2.4.4
-export DC1_PORT=1521
-export DC1_USER=apimadmin
-export DC1_PASS="Apim@123"
-
-# DC2 — West US 2 (Oracle DB only)
-export DC2_HOST=10.1.4.4
-export DC2_PORT=1521
-export DC2_USER=apimadmin
-export DC2_PASS="Apim@123"
-```
+At the end of this guide, both VMs have no Oracle DB or OGG containers at all — a completely empty Docker host, images intact, ready for a fresh run from §Part 3 of the main guide.
 
 ---
 
 ## Phase 1: Uninstall APIM Helm releases (both DCs)
 
-Before touching any DB or GG state, stop APIM. Leaving pods running while you drop their databases just produces a storm of JDBC reconnect errors in the pod logs; uninstalling is cleaner.
+Before touching any DB or GG containers, stop APIM. Leaving pods running while the databases they're connected to are being destroyed produces a storm of JDBC reconnect errors in the pod logs; uninstalling is cleaner.
 
 Run on **both** `kubectl` contexts (DC1 AKS and DC2 AKS). If you're using the deploy scripts under `scripts/`, the release names match the ones in `deploy-azure-dc1-oracle.sh` / `deploy-azure-dc2-oracle.sh`:
 
@@ -84,7 +64,7 @@ kubectl -n apim get pvc           # usually also empty, unless you had CP persis
 
 ## Phase 2: Nuke the OGG hub container and its volume (DC1 only)
 
-SSH to the **DC1 VM** (`apim-4-7-eus1-oracle`). The OGG hub is a single container named `ogg-hub` whose state lives entirely on a named volume — killing both the container and the volume wipes the deployment cleanly.
+SSH to the **DC1 VM** (`apim-4-7-eus1-oracle`). The OGG hub state lives entirely on the `ogg-hub-data` named volume — kill both the container and the volume.
 
 ```bash
 # On the DC1 VM
@@ -93,132 +73,65 @@ docker rm   ogg-hub
 docker volume rm ogg-hub-data
 ```
 
-> **Why kill the volume too?** Everything that matters lives on `/u02` inside the container, which is backed by the `ogg-hub-data` named volume: the Local deployment config, the 8 DB Connections (including the stored passwords in the credential wallet), the 4 Extracts, the 4 Replicats, trail files `aa` / `ab` / `ba` / `bb` in `/u02/Local/var/lib/data/`, the generated `oggadmin` UI password from first boot, and the Integrated Extract's AQ queue metadata. If you delete the container but keep the volume, the next `docker run` re-adopts every one of those — you end up with a not-so-clean reset. For a true clean slate, both have to go.
-
 **Verify clean state**:
 
 ```bash
-docker ps    -a | grep ogg-hub     # expect no rows
-docker volume ls  | grep ogg-hub    # expect no rows
+docker ps -a | grep ogg-hub       # expect no rows
+docker volume ls | grep ogg-hub   # expect no rows
 ```
 
-> **One thing you can skip**: `docker rmi container-registry.oracle.com/goldengate/goldengate-oracle-free:latest`. The image is big (~3 GB), re-downloading it burns bandwidth and OCR pulls can rate-limit. Leaving it cached on disk is fine — it's immutable and the next `docker run` in §5.1 of the main guide will just reuse it.
+> The `goldengate-oracle-free:latest` image itself can stay cached — re-downloading a multi-GB image from OCR is slow and pointless. The next `docker run` in §Part 5 of the main guide will reuse it.
 
 ---
 
-## Phase 3: Drop the PDBs on both DCs
+## Phase 3: Nuke the Oracle DB containers and volumes (both DCs)
 
-SSH to each DB VM in turn (`apim-4-7-eus1-oracle` for DC1, `apim-4-7-wus2-oracle` for DC2) and drop both PDBs. The CDB itself stays up the whole time — `DROP PLUGGABLE DATABASE` does not require a CDB restart, it just unregisters the PDB from the control file and removes its datafiles.
-
-### 3.1 Phase-1 teardown confirmation
-
-Before dropping, sanity-check that no APIM JDBC sessions are still connected. If Phase 1 completed cleanly the PDB should have only the CDB's own background/maintenance sessions (< 10 rows).
+SSH to each DB VM in turn — **DC1** (`apim-4-7-eus1-oracle`) and **DC2** (`apim-4-7-wus2-oracle`) — and run the same three commands:
 
 ```bash
-docker exec -it oracle-db sqlplus / as sysdba
+# Run on BOTH DC1 and DC2
+docker stop oracle-db
+docker rm   oracle-db
+docker volume rm oracle-db-data
 ```
 
-```sql
-ALTER SESSION SET CONTAINER = apim_db;
-SELECT username, program, count(*)
-  FROM v$session
- WHERE username IS NOT NULL
- GROUP BY username, program
- ORDER BY 1,2;
+**Verify clean state** (on each DC):
 
-ALTER SESSION SET CONTAINER = shared_db;
-SELECT username, program, count(*)
-  FROM v$session
- WHERE username IS NOT NULL
- GROUP BY username, program
- ORDER BY 1,2;
-
-ALTER SESSION SET CONTAINER = CDB$ROOT;
+```bash
+docker ps -a | grep oracle-db       # expect no rows
+docker volume ls | grep oracle-db   # expect no rows
 ```
 
-If you still see `APIMADMIN` or `GGADMIN` sessions whose `program` mentions `JDBC Thin Client` or `OGG_Extract` / `OGG_Replicat`, something from Phase 1 or Phase 2 was skipped. Go back and complete them — do not try to drop a PDB while there are still live application sessions against it.
-
-### 3.2 Drop apim_db and shared_db
-
-Run on **both** DCs (same commands):
-
-```sql
--- Still inside sqlplus / as sysdba, at CDB$ROOT after the sanity check above.
-
-ALTER PLUGGABLE DATABASE apim_db   CLOSE IMMEDIATE;
-ALTER PLUGGABLE DATABASE shared_db CLOSE IMMEDIATE;
-
-DROP PLUGGABLE DATABASE apim_db   INCLUDING DATAFILES;
-DROP PLUGGABLE DATABASE shared_db INCLUDING DATAFILES;
-
--- Verify: only CDB$ROOT and PDB$SEED should remain
-SELECT name, open_mode FROM v$pdbs;
-EXIT;
-```
-
-Expected output of the last query — exactly these two rows:
-
-```
-NAME         OPEN_MODE
------------- ----------
-PDB$SEED     READ ONLY
-```
-
-(`CDB$ROOT` itself doesn't appear in `v$pdbs` — it's the container.)
-
-If the `CLOSE IMMEDIATE` call hangs or errors with `ORA-65025 pluggable database ... is in use`, see the *"PDB won't close"* section under Troubleshooting below — there's almost always a stray session holding it open.
-
-### 3.3 Confirm CDB-level state survived
-
-These CDB-level settings from §4.2 of the main guide are the ones we're deliberately preserving. Re-checking them gives you confidence that the next run of the main guide can **skip §4.2 entirely**:
-
-```sql
--- still sqlplus / as sysdba at CDB$ROOT
-SELECT log_mode, force_logging, supplemental_log_data_min FROM v$database;
-SHOW PARAMETER enable_goldengate_replication;
-SHOW PARAMETER processes;
-SHOW PARAMETER sessions;
-EXIT;
-```
-
-Expected:
-
-```
-LOG_MODE       FORCE_LOGGING  SUPPLEMENTAL_LOG_DATA_MIN
--------------- -------------- -------------------------
-ARCHIVELOG     YES            YES
-
-enable_goldengate_replication        TRUE
-processes                            1000
-sessions                             1522
-```
-
-If any of those regressed (most likely scenario: you reset the SPFILE, or you did a `docker rm oracle-db` at some point and lost the `ORACLE_PWD` + parameter state), you'll need to re-apply §4.2 of the main guide after recreating the PDBs — noted in Phase 4 below.
+> **Why kill the volume?** The Oracle data volume (`oracle-db-data`) holds the CDB datafiles, SPFILE, and redo logs. Everything — the PDBs, the `apimadmin`/`ggadmin` users, the ACDR hidden columns, the registered Extracts — lives in there. Killing the container but keeping the volume means the next `docker run` picks up the same state you're trying to wipe. Kill both.
+>
+> The `oracle-free:23` image can stay cached — same reasoning as OGG above.
+>
+> When you run the Oracle container next time, Oracle will reinitialize the CDB from scratch (takes ~5–10 minutes on first boot). That's the price of a clean slate; it's worth it to avoid the session-kill and PDB-drop complexity.
 
 ---
 
-## Phase 4: Re-run the main guide from §4.1
+## Phase 4: Re-run the main guide from §Part 3
 
-At this point both DC VMs hold:
+At this point both DC VMs have:
 
-- An `oracle-db` container with a CDB that already has archive log mode, force logging, supplemental logging, `enable_goldengate_replication = TRUE`, and `processes = 1000` — no need to bounce the instance again.
-- Empty space where the `apim_db` / `shared_db` PDBs used to live.
-- No `ogg-hub` container at all (on DC1).
+- No Oracle DB container or data volume.
+- No `ogg-hub` container or data volume (DC1 only).
 - No APIM Helm releases on either AKS cluster.
+- Both Docker image caches intact.
 
-### 4.1 Follow the main guide from §4.1 onwards
+### 4.1 Follow the main guide from §Part 3 onwards
 
-Re-run the main guide in order, **starting from §4.1**:
+Re-run the main guide **in full order**, starting from §Part 3:
 
-1. **§4.1 — Create PDBs and `apimadmin`**. Run `CREATE PLUGGABLE DATABASE apim_db / shared_db`, `ALTER PLUGGABLE DATABASE ... OPEN SAVE STATE`, create `apimadmin` in each PDB with `GRANT CONNECT, RESOURCE, DBA, UNLIMITED TABLESPACE`. Same commands on both DCs.
-2. **§4.2 — SKIP** the SQL block; the CDB-level settings all survived from the previous run. Do **not** re-run `SHUTDOWN IMMEDIATE / STARTUP MOUNT / ALTER DATABASE ARCHIVELOG;` — it's harmless but pointlessly slow. The only thing you might want to re-run from §4.2 is the verify queries at the end, to reconfirm the same state you already verified in Phase 3.3 above.
-   - **Exception**: if Phase 3.3 showed `processes < 1000` or `log_mode = NOARCHIVELOG`, you *do* need to run §4.2 from the top. That restores both with a single bounce.
-3. **§4.3 — Load the APIM schemas**. `docker cp` the per-DC table + sequence scripts and run them through sqlplus. DC1 uses `dbscripts/dc1/Oracle/*`, DC2 uses `dbscripts/dc2/Oracle/*`. The split-sequence offsets (DC1 odd, DC2 even) come from these files as-is — do not re-edit them.
-4. **§4.4 — Verify schema load**. `SELECT COUNT(*) FROM USER_TABLES` should return a nonzero count, and the `DATA_DEFAULT` check on `IDN_OAUTH2_ACCESS_TOKEN.DCID` should return `'DC1'` on DC1 and `'DC2'` on DC2.
-5. **§4.5 — Sanity-check DB-to-DB reachability**. `nc -zv 10.1.4.4 1521` from DC1 and `nc -zv 10.2.4.4 1521` from DC2. Unless you changed an NSG rule, this should Just Work.
-6. **§4.6 — Create `ggadmin` and grant GG privileges** in both PDBs on both DCs. This includes `LOGMINING` and `OGG_CAPTURE` + `SELECT ANY DICTIONARY` + `EXECUTE ON DBMS_XSTREAM_GG` for `apimadmin` — the ones that let §6.8 succeed.
-7. **§Part 5 — Start the OGG hub container on DC1**. `docker volume create ogg-hub-data; docker run -d --name ogg-hub --network host -v ogg-hub-data:/u02 container-registry.oracle.com/goldengate/goldengate-oracle-free:latest`. Grab the new `oggadmin` password from the container logs (it's randomly regenerated on first boot of the new volume — the password from the *previous* run is gone along with the volume). SSH-tunnel 8011→9011 + 9012–9015, force the first-login password change, click into `Deployments → Local → Administration Service`.
-8. **§Part 6 — Rebuild the Active-Active topology** from scratch. All 6.x subsections in order: §6.1 four `apimadmin` connections, §6.2 checkpoint + trandata + heartbeat on each of the four, §6.3 four `ggadmin` (`_gg`) connections with heartbeat-only, §6.4 four Extracts (`EAPIM1/2`, `ESHR1/2`), §6.5 four Replicats (`RAPM1/2`, `RSHR1/2`), §6.6 verify schema trandata via `DBA_CAPTURE_PREPARED_TABLES`, §6.7 ACDR loop on both DCs, §6.8 `REGISTER EXTRACT` from `adminclient`, §6.9 coordinated startup (all 4 Extracts first, then all 4 Replicats), §6.10 round-trip verification.
+1. **§Part 3 — Start the Oracle DB container** on each DC. `docker run -d --name oracle-db ...`. Wait for the CDB init to complete (watch `docker logs -f oracle-db` for `DATABASE IS READY TO USE`).
+2. **§4.1 — Create PDBs and `apimadmin`**. `CREATE PLUGGABLE DATABASE apim_db / shared_db`, `ALTER PLUGGABLE DATABASE ... OPEN SAVE STATE`, `apimadmin` with `GRANT CONNECT, RESOURCE, DBA, UNLIMITED TABLESPACE` in each PDB. Same on both DCs.
+3. **§4.2 — Enable archive log mode, supplemental logging, GoldenGate replication, and bump PROCESSES**. Run the full block including `ALTER SYSTEM SET PROCESSES=1000 SCOPE=SPFILE`, `SHUTDOWN IMMEDIATE / STARTUP MOUNT / ALTER DATABASE ARCHIVELOG / ...`. **Do not skip** — the new volume has none of these settings.
+4. **§4.3 — Load the APIM schemas**. `docker cp` the per-DC scripts and run through sqlplus. DC1 uses `dbscripts/dc1/Oracle/*`, DC2 uses `dbscripts/dc2/Oracle/*`.
+5. **§4.4 — Verify schema load**. `SELECT COUNT(*) FROM USER_TABLES` and the `DCID` default check.
+6. **§4.5 — Sanity-check DB-to-DB reachability**. `nc -zv 10.1.4.4 1521` from DC1, `nc -zv 10.2.4.4 1521` from DC2.
+7. **§4.6 — Create `ggadmin` and grant GG privileges** in both PDBs on both DCs.
+8. **§Part 5 — Start the OGG hub container on DC1**. `docker volume create ogg-hub-data; docker run -d --name ogg-hub ...`. Grab the new `oggadmin` password from the container logs. SSH-tunnel, force first-login password change, open Administration Service.
+9. **§Part 6 — Rebuild the Active-Active topology** from scratch. All 6.x subsections in order: §6.1 four `apimadmin` connections, §6.2 checkpoint + trandata + heartbeat, §6.3 four `ggadmin` (`_gg`) connections, §6.4 four Extracts (`EAPIM1/2`, `ESHR1/2`), §6.5 four Replicats (`RAPM1/2`, `RSHR1/2`), §6.7 ACDR loop on both DCs, §6.8 `REGISTER EXTRACT` via `adminclient`, §6.9 coordinated startup, §6.10 round-trip verification.
 
 ### 4.2 Re-deploy APIM
 
@@ -253,56 +166,16 @@ You should see the `admin` user (created by the DC1 first startup) replicated ac
 
 ## Troubleshooting
 
-### "PDB won't close: ORA-65025 pluggable database apim_db is in use"
+### Container volume delete fails: "volume is in use"
 
-Despite Phase 1 tearing down APIM, a stray JDBC session or a lingering GG-side connection can keep a PDB pinned. Kill it and retry:
-
-```sql
-ALTER SESSION SET CONTAINER = apim_db;
-
--- List what's still connected (filter out Oracle's own background programs)
-SELECT sid, serial#, username, program, status
-  FROM v$session
- WHERE username IS NOT NULL
- ORDER BY username, program;
-
--- Terminate each application session
-ALTER SYSTEM KILL SESSION 'sid,serial#' IMMEDIATE;
-
--- Retry the close
-ALTER SESSION SET CONTAINER = CDB$ROOT;
-ALTER PLUGGABLE DATABASE apim_db CLOSE IMMEDIATE;
-```
-
-If `KILL SESSION` itself errors with `ORA-00031 session marked for kill`, the session is mid-commit and will clear on its own within a few seconds — just wait and retry the close.
-
-### "DROP PLUGGABLE DATABASE ... hangs"
-
-Usually means there's still a Replicat session from the *other* DC's `ogg-hub` holding an apply connection. If Phase 2 nuked `ogg-hub` on DC1, this shouldn't happen — but if you get here with DC2 PDBs still wedged, double-check that there is no `ogg-hub` container anywhere in your topology that you forgot about:
+If `docker volume rm` errors with `volume is in use`, the container didn't fully exit between `docker stop` and `docker rm`. Force it:
 
 ```bash
-# On each VM
-docker ps -a --filter name=ogg-hub
-```
-
-If one comes back, stop and remove it, then retry the `DROP PLUGGABLE DATABASE`.
-
-### OGG volume delete fails: "volume is in use"
-
-If `docker volume rm ogg-hub-data` errors with `volume is in use`, the `ogg-hub` container didn't fully exit between the `docker stop` and `docker rm`. Force it:
-
-```bash
-docker rm -f ogg-hub
-docker volume rm ogg-hub-data
+docker rm -f oracle-db   && docker volume rm oracle-db-data   # DB
+docker rm -f ogg-hub     && docker volume rm ogg-hub-data     # OGG
 ```
 
 `docker rm -f` sends `SIGKILL` and removes the container in one step, which releases the volume's reference count immediately.
-
-### CDB-level state regressed during the reset
-
-If Phase 3.3 shows `processes = 200` or `log_mode = NOARCHIVELOG`, the SPFILE was lost at some point (usually a `docker rm oracle-db` earlier in the session, or an intentional `docker volume rm oracle-db-data` to start fully fresh). In that case Phase 4.1 needs to run **all of §4.2** — not just the skip path — because you'll need the archive-log bounce *plus* the `PROCESSES = 1000` bump *plus* force logging and supplemental logging from scratch.
-
-If the CDB is wedged hard enough that re-running §4.2 itself fails, the next escalation is the *"Hard reset of a DB container (data loss)"* section in Part 7 of the main guide — which is `docker rm -f oracle-db; docker volume rm oracle-db-data; re-run Part 3 then Part 4 from scratch`. That's the next level of reset below this guide.
 
 ### Stale wallet or stored credentials after a re-add
 
