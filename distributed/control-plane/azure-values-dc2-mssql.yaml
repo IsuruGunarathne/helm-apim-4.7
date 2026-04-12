@@ -40,7 +40,7 @@ kubernetes:
       emptyDir: {}
   extraVolumeMounts:
     - name: mssql-driver-vol
-      mountPath: /home/wso2carbon/wso2am-acp-4.7.0-SNAPSHOT/repository/components/lib/mssql-jdbc-12.8.1.jre11.jar
+      mountPath: /home/wso2carbon/wso2am-acp-4.7.0-beta/repository/components/lib/mssql-jdbc-12.8.1.jre11.jar
       subPath: mssql-jdbc-12.8.1.jre11.jar
       readOnly: true
 
@@ -111,8 +111,7 @@ wso2:
       failureThreshold: 12
     image:
       registry: "docker.io"
-      repository: "isurugunarathne/wso2apim:acp-4.7.0-beta"
-      digest: "sha256:5ff06a1b35cc16d573dc5784f6a95639f45c9881fbf938e6bcf31cc391e51f28"
+      repository: "wso2/wso2am-acp:4.7.0-beta"
       imagePullPolicy: Always
     resources:
       requests:

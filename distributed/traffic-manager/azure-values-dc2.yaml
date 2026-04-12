@@ -28,7 +28,7 @@ kubernetes:
       emptyDir: {}
   extraVolumeMounts:
     - name: postgresql-driver-vol
-      mountPath: /home/wso2carbon/wso2am-tm-4.7.0-SNAPSHOT/repository/components/lib/postgresql-42.7.4.jar
+      mountPath: /home/wso2carbon/wso2am-tm-4.7.0-beta/repository/components/lib/postgresql-42.7.4.jar
       subPath: postgresql-42.7.4.jar
       readOnly: true
 
@@ -88,8 +88,7 @@ wso2:
       failureThreshold: 12
     image:
       registry: "docker.io"
-      repository: "isurugunarathne/wso2apim:tm-4.7.0-beta"
-      digest: "sha256:e3f29f20fe8d5d4757441ed3a5c0c0171bb48a70ba5c97fc1a88d6864685ee6a"
+      repository: "wso2/wso2am-tm:4.7.0-beta"
       imagePullPolicy: Always
     resources:
       requests:
