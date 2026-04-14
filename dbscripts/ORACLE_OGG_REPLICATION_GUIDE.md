@@ -449,8 +449,8 @@ docker exec -it oracle-db sqlplus 'apimadmin/"Apim@123"@localhost:1521/apim_db'
 ```
 
 ```sql
-SELECT COUNT(*) FROM USER_TABLES;      -- expect a nonzero count
-SELECT COUNT(*) FROM USER_SEQUENCES;   -- expect a nonzero count
+SELECT COUNT(*) FROM USER_TABLES;   
+SELECT COUNT(*) FROM USER_SEQUENCES;
 SELECT DATA_DEFAULT FROM USER_TAB_COLUMNS
  WHERE TABLE_NAME='IDN_OAUTH2_ACCESS_TOKEN' AND COLUMN_NAME='DCID';
 -- expect 'DC1' on DC1, 'DC2' on DC2
