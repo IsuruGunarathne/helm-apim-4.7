@@ -814,11 +814,14 @@ Go to **Administration Service → Replicats → Add Replicat** and walk the fou
    USERIDALIAS <_gg alias> DOMAIN OracleGoldenGate
    ```
 
-   The default editable box contains `MAP *.*, TARGET *.*;` — that's **too broad**. It would try to map system schemas like `SYS` / `SYSTEM` / `GGADMIN` and fail on the first non-APIM row. Replace it with:
+   The default editable box contains `MAP *.*, TARGET *.*;` — that's **too broad**. It would try to map system schemas like `SYS` / `SYSTEM` / `GGADMIN` and fail on the first non-APIM row. Replace it with the following, making sure to include the `REPERROR` line **before** the `MAP` line:
 
    ```
+   REPERROR (1403, DISCARD)
    MAP APIMADMIN.*, TARGET APIMADMIN.*;
    ```
+
+   The `REPERROR (1403, DISCARD)` line is necessary because WSO2 APIM's permission subsystem periodically truncates and re-seeds `UM_ROLE_PERMISSION`. In an active-active setup both DCs may delete the same rows independently; when the replicated DELETE arrives on the other side the row is already gone, producing ORA-01403 (No data found). Without this line the Replicat abends. Discarding is safe — the net outcome (row absent) is already correct on the target.
 
 Click **Create** (not *Create and Run*). Repeat for all four Replicats. At the end of §6.5 the Administration Service Overview should show **4 Extracts + 4 Replicats, all in STOPPED state** — that's the checkpoint where this section ends.
 
@@ -1053,6 +1056,7 @@ Common Replicat abend-on-start causes, in order of likelihood:
 1. **Heartbeat warning on the Replicat detail page** → you skipped **Heartbeat → Add Heartbeat Table** on one of the `_gg` connections in §6.3. This doesn't cause an abend, but it does silently disable end-to-end lag reporting for that Replicat. Fix the `_gg` connection, refresh, and restart.
 2. **`OGG-01211 Unable to acquire checkpoint record for ...`** → the checkpoint table pre-populated in the Replicat wizard (§6.5) got typed wrong. It must be `"GGADMIN"."GGS_CHKPT"` exactly.
 3. **`OGG-01296 Error mapping from SYS.TABLE to SYS.TABLE`** → the parameter file `MAP *.*, TARGET *.*;` default wasn't replaced with `MAP APIMADMIN.*, TARGET APIMADMIN.*;` in §6.5. Stop the Replicat, Alter → edit the param file, restart.
+4. **`OGG-01668 PROCESS ABENDING` with `OGG-00869 No data found` on `UM_ROLE_PERMISSION`** → the `REPERROR (1403, DISCARD)` line is missing from the parameter file (it should have been added in §6.5). Stop the Replicat, open **Alter → Parameter File**, add `REPERROR (1403, DISCARD)` before the `MAP` line, save, and restart.
 
 At the end of §6.9 the Administration Service Overview should show **4 Extracts Running + 4 Replicats Running** with all 8 heartbeat lag values under 10 s. That's the "live" state — §6.10 is the functional proof.
 
