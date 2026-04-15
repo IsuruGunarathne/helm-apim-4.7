@@ -405,6 +405,10 @@ wso2:
         gateway:
           # -- Gateway label used to filter out artifact retrieval
           labels: ["Default"]
+          # -- Time in milliseconds the gateway will retry artifact retrieval after a null response.
+          # Increase this in multi-DC deployments to accommodate database replication lag.
+          # Set to 0 to disable (default).
+          deploymentRetryDuration: 0
         tenantLoading:
           # -- Enable tenant loading in the gateway for artifacts
           enabled: false

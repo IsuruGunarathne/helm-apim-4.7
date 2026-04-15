@@ -102,6 +102,9 @@ wso2:
         urls:
           - "wso2am-cp-1-service"
           - "wso2am-cp-2-service"
+      syncRuntimeArtifacts:
+        gateway:
+          deploymentRetryDuration: 30000
 
   deployment:
     replicas: 2
