@@ -472,7 +472,7 @@ SQL
 
 ---
 
-## Part 9: Verify Replication Status
+## Part 9: Verify Replication Status (https://gemini.google.com/app/2d162f304b3f5f91)
 
 **On each VM**, in each database:
 
