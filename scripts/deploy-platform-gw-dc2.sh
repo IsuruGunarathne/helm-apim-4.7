@@ -43,7 +43,7 @@ else
     echo "  1. Go to https://cp.wus2.apim.example.com/admin (or DC1's Admin Portal)"
     echo "  2. Navigate to Gateways > Universal Gateways"
     echo "  3. Add a new gateway (type: Universal Gateway)"
-    echo "     - Display Name: Universal Gateway - DC2 (West US)"
+    echo "     - Display Name: UGDC2WUS"
     echo "     - URL: https://ug.wus2.apim.example.com"
     echo "     - Visibility: Public"
     echo "  4. Save and copy the registration token"
