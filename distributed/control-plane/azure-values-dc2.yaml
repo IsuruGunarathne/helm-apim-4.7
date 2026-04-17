@@ -75,15 +75,15 @@ wso2:
         jdbc:
           driver: "org.postgresql.Driver"
         apim_db:
-          url: "jdbc:postgresql://apim-4-7-wus2.postgres.database.azure.com:5432/apim_db?sslmode=require"
-          username: "apimadminwest"
-          password: "DATABASE_PASSWORD"
+          url: "jdbc:postgresql://10.1.4.4:5432/apim_db"
+          username: "postgres"
+          password: "Apim@123"
           poolParameters:
             validationQuery: "SELECT 1"
         shared_db:
-          url: "jdbc:postgresql://apim-4-7-wus2.postgres.database.azure.com:5432/shared_db?sslmode=require"
-          username: "apimadminwest"
-          password: "DATABASE_PASSWORD"
+          url: "jdbc:postgresql://10.1.4.4:5432/shared_db"
+          username: "postgres"
+          password: "Apim@123"
           poolParameters:
             validationQuery: "SELECT 1"
       oauth_config:

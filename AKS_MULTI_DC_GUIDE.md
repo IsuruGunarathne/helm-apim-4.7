@@ -580,7 +580,7 @@ Register **one gateway per DC**. Each gets its own URL and registration token.
 2. Navigate to **Gateways** > **Universal Gateways**
 3. Click **Add Gateway**, select type **Universal Gateway**
 4. Configure:
-   - **Display Name**: `Universal Gateway - DC1 (East US)`
+   - **Display Name**: `UGDC1EUS`
    - **URL**: `https://ug.eus1.apim.example.com`
    - **Visibility**: Public
 5. Click **Add** and copy the **registration token**
@@ -588,7 +588,7 @@ Register **one gateway per DC**. Each gets its own URL and registration token.
 **DC2 Gateway:**
 1. Same Admin Portal (registration replicates via DB)
 2. Add another gateway:
-   - **Display Name**: `Universal Gateway - DC2 (West US)`
+   - **Display Name**: `UGDC2WUS`
    - **URL**: `https://ug.wus2.apim.example.com`
    - **Visibility**: Public
 3. Click **Add** and copy the **registration token**
