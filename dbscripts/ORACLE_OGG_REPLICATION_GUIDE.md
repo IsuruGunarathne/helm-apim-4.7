@@ -876,6 +876,9 @@ ACDR adds hidden `CDRTS$ROW` (row-level timestamp) and per-column `CDRTS$<col>` 
 The loop below also explicitly skips `APIMADMIN.GG_HEARTBEAT*` via a `NOT LIKE` filter — those are the heartbeat tables from §6.2, and we've already kept them out of Extract capture via the `TABLEEXCLUDE` in §6.4.
 
 Run the block **on both DCs** (DC1 first, then DC2):
+```bash
+docker exec -it oracle-db sqlplus / as sysdba
+```
 
 ```bash
 docker exec -i oracle-db sqlplus -S / as sysdba <<'SQL'
