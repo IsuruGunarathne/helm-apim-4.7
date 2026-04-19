@@ -32,7 +32,7 @@ kubernetes:
       emptyDir: {}
   extraVolumeMounts:
     - name: postgresql-driver-vol
-      mountPath: /home/wso2carbon/wso2am-acp-4.7.0-beta/repository/components/lib/postgresql-42.7.4.jar
+      mountPath: /home/wso2carbon/wso2am-acp-4.7.0-SNAPSHOT/repository/components/lib/postgresql-42.7.4.jar
       subPath: postgresql-42.7.4.jar
       readOnly: true
 
@@ -87,7 +87,8 @@ wso2:
             gatewayType: "Regular"
             provider: "wso2"
             displayInApiConsole: true
-            description: "This is a hybrid gateway that handles both production and sandbox token traffic."
+            description: "This is a hybrid gateway that handles both production and sandbox
+              token traffic."
             showAsTokenEndpointUrl: true
             serviceName: "localhost"
             servicePort: 9443
@@ -103,7 +104,7 @@ wso2:
       failureThreshold: 6
     image:
       registry: "docker.io"
-      repository: "wso2/wso2am-acp:4.7.0-beta"
+      repository: "isurugunarathne/wso2apim:acp-4.7.0-beta"
       imagePullPolicy: Always
     resources:
       requests:

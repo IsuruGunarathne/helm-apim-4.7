@@ -40,7 +40,7 @@ kubernetes:
       emptyDir: {}
   extraVolumeMounts:
     - name: mssql-driver-vol
-      mountPath: /home/wso2carbon/wso2am-acp-4.7.0-beta/repository/components/lib/mssql-jdbc-12.8.1.jre11.jar
+      mountPath: /home/wso2carbon/wso2am-acp-4.7.0-SNAPSHOT/repository/components/lib/mssql-jdbc-12.8.1.jre11.jar
       subPath: mssql-jdbc-12.8.1.jre11.jar
       readOnly: true
 
@@ -75,13 +75,15 @@ wso2:
         jdbc:
           driver: "com.microsoft.sqlserver.jdbc.SQLServerDriver"
         apim_db:
-          url: "jdbc:sqlserver://10.1.3.4:1433;databaseName=apim_db;encrypt=true;trustServerCertificate=true"
+          url: "jdbc:sqlserver://10.1.3.4:1433;databaseName=apim_db;encrypt=true;trustSer\
+            verCertificate=true"
           username: "apimadminwest"
           password: "distributed@2"
           poolParameters:
             validationQuery: "SELECT 1"
         shared_db:
-          url: "jdbc:sqlserver://10.1.3.4:1433;databaseName=shared_db;encrypt=true;trustServerCertificate=true"
+          url: "jdbc:sqlserver://10.1.3.4:1433;databaseName=shared_db;encrypt=true;trustS\
+            erverCertificate=true"
           username: "apimadminwest"
           password: "distributed@2"
           poolParameters:
@@ -112,7 +114,7 @@ wso2:
       failureThreshold: 12
     image:
       registry: "docker.io"
-      repository: "wso2/wso2am-acp:4.7.0-beta"
+      repository: "isurugunarathne/wso2apim:acp-4.7.0-beta"
       imagePullPolicy: Always
     resources:
       requests:
