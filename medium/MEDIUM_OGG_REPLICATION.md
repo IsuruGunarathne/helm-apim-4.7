@@ -99,7 +99,7 @@ docker run -d --name ogg-hub --network host --restart unless-stopped \
 ```
 
 - Mount `/u02`, not `/u01` — `/u01` holds binaries; mounting there crashes the init script.
-- Insecure mode is deliberate: the `OGG_SECURE_DEPLOYMENT=true` init path is broken in `goldengate-oracle-free:latest`.
+- Insecure mode is deliberate — it skips the cert/wallet dance and keeps the setup simple. The private VNet plus SSH-tunnelled UI access means there's no plaintext traffic on the public internet anyway.
 
 Grab the generated admin password from the logs — call it `<OGG_ADMIN_PASSWORD>`:
 
@@ -212,7 +212,7 @@ If DC1 has no public IP, SSH into a jump host and replace the three right-hand `
 
 ## Topology configuration
 
-Goal: **8 DB Connections → 4 Extracts → 4 Replicats → ACDR → REGISTER EXTRACT → coordinated startup.**
+Goal: **8 DB Connections → 4 Extracts → 4 Replicats → ACDR → coordinated startup.**
 
 ### 1. DB Connections (8 total)
 
@@ -352,35 +352,7 @@ END;
 
 Verify: `SELECT COUNT(*) FROM dba_gg_auto_cdr_tables WHERE table_owner='APIMADMIN';` — ~242 in `apim_db`, ~48 in `shared_db`, identical on both DCs. PK-less tables (4 in `apim_db`, 3 in `shared_db`) are skipped silently and fall back to all-column key matching without latest-timestamp conflict handling.
 
-### 6. Register Extracts (adminclient)
-
-Integrated Extracts won't start without a matching `DBA_CAPTURE` row (`OGG$<name>`). The wizard doesn't auto-register and there's no **Register** action in the UI — only `adminclient` has it.
-
-```bash
-docker exec -it ogg-hub /u01/ogg/bin/adminclient
-```
-
-At the `OGG (not connected)` prompt:
-
-```
-CONNECT http://localhost:9012 AS oggadmin PASSWORD <OGG_ADMIN_PASSWORD>
-DBLOGIN USERIDALIAS dc1_apim   DOMAIN OracleGoldenGate
-REGISTER EXTRACT EAPIM1 DATABASE
-DBLOGIN USERIDALIAS dc2_apim   DOMAIN OracleGoldenGate
-REGISTER EXTRACT EAPIM2 DATABASE
-DBLOGIN USERIDALIAS dc1_shared DOMAIN OracleGoldenGate
-REGISTER EXTRACT ESHR1  DATABASE
-DBLOGIN USERIDALIAS dc2_shared DOMAIN OracleGoldenGate
-REGISTER EXTRACT ESHR2  DATABASE
-EXIT
-```
-
-> **`http://`, not `https://`** — insecure deployment. `https` fails with `OGG-12982`.
-> **`DBLOGIN` before each `REGISTER`** — adminclient's `CONNECT` authenticates against the deployment, not the database.
-
-Verify: `SELECT capture_name, status FROM dba_capture;` in each PDB shows `OGG$<name>` in `DISABLED / LOCAL` (flips to `ENABLED` once Extract starts).
-
-### 7. Coordinated startup
+### 6. Coordinated startup
 
 Order: **all 4 Extracts first, then all 4 Replicats.** Starting a Replicat before its source Extract has written trail bytes abends it with a missing-trail error.
 
@@ -421,18 +393,42 @@ The proof of active-active: **seed PKs differ between DCs (odd on DC1, even on D
 
 | Symptom | Cause / Fix |
 |---|---|
-| `OGG-02024 / OGG-10556` on Extract first start | Integrated Extract not registered. Run `DBLOGIN` + `REGISTER EXTRACT` in adminclient for that Extract. |
 | `OGG-12982 Failed to establish secure communication` | `https://` against insecure deployment. Use `http://localhost:9012`. |
 | `OGG-02062 ... required privileges ... integrated capture` on `REGISTER` | `apimadmin` missing `OGG_CAPTURE` + `SELECT ANY DICTIONARY` + `EXECUTE ON DBMS_XSTREAM_GG` in that PDB. Re-run the grants. |
 | `ORA-26988` on any GRANT | You called `dbms_goldengate_auth.grant_admin_privilege`. Use direct `GRANT`s only. |
 | Replicat heartbeat warning on `_gg` alias | Skipped `Heartbeat > Add Heartbeat Table` on that `_gg` connection. Add it — the DB tables already exist; this wires up the alias. |
 | Gateway logs `Storage returned null` after cross-DC API publish | Replication lag vs. JMS event. Raise `deployment_retry_duration` under `[apim.sync_runtime_artifacts.gateway]` in the gateway `deployment.toml` (start 30 s). |
 
----
+### Extract abends on first start with `OGG-02024 / OGG-10556 / OGG-01668`
 
-## Teardown
+The Extract wizard normally auto-registers the Integrated Extract with the source PDB, creating the matching `OGG$<name>` row in `DBA_CAPTURE`. If that silently fails, the first `Start` abends because there's no LogMiner capture process to attach to. Check from the DB side:
 
-See [`dbscripts/ORACLE_RESET_GUIDE.md`](../dbscripts/ORACLE_RESET_GUIDE.md) for a clean-slate reset: uninstall APIM Helm releases, drop the `ogg-hub` container + volume on DC1, drop the `oracle-db` container + volume on both DCs. Image caches are preserved.
+```sql
+ALTER SESSION SET CONTAINER = apim_db;
+SELECT capture_name, status FROM dba_capture;
+-- expect OGG$EAPIM1 (DC1) / OGG$EAPIM2 (DC2), etc.
+```
+
+If the row is missing, register manually via `adminclient` — there is no Register action in the Administration Service UI:
+
+```bash
+docker exec -it ogg-hub /u01/ogg/bin/adminclient
+```
+
+```
+CONNECT http://localhost:9012 AS oggadmin PASSWORD <OGG_ADMIN_PASSWORD>
+DBLOGIN USERIDALIAS dc1_apim   DOMAIN OracleGoldenGate
+REGISTER EXTRACT EAPIM1 DATABASE
+DBLOGIN USERIDALIAS dc2_apim   DOMAIN OracleGoldenGate
+REGISTER EXTRACT EAPIM2 DATABASE
+DBLOGIN USERIDALIAS dc1_shared DOMAIN OracleGoldenGate
+REGISTER EXTRACT ESHR1  DATABASE
+DBLOGIN USERIDALIAS dc2_shared DOMAIN OracleGoldenGate
+REGISTER EXTRACT ESHR2  DATABASE
+EXIT
+```
+
+> `http://`, not `https://` — insecure deployment. `DBLOGIN` is required before each `REGISTER` because adminclient's `CONNECT` authenticates against the deployment, not the database.
 
 ---
 
@@ -441,6 +437,6 @@ See [`dbscripts/ORACLE_RESET_GUIDE.md`](../dbscripts/ORACLE_RESET_GUIDE.md) for 
 - **Move the OGG hub to a dedicated VM** in production — DC1 going down shouldn't take out replication too.
 - **Vault the passwords** — `<DB_PASSWORD>` appears in GRANTs, Easy Connect strings, and the GG credential wallet; CSI-injected secrets belong in all three.
 - **Automate via the REST API** — `http://localhost:9012/services/v2/` covers everything the UI does. Terraform or a small `curl` script makes rebuilds reproducible.
-- **GG Free 23.26 specifics:** no Pipelines/Active-Active wizard; `REGISTER EXTRACT` is CLI-only; secure-deployment mode is broken — use insecure + SSH tunnel; `dbms_goldengate_auth.grant_admin_privilege` is disabled, so direct GRANTs are the supported path.
+- **GG Free 23.26 specifics:** no Pipelines/Active-Active wizard; manual `REGISTER EXTRACT` via `adminclient` is the only fallback when the Extract wizard's auto-registration silently fails (the UI has no Register action); use insecure mode behind an SSH tunnel to keep the setup simple; `dbms_goldengate_auth.grant_admin_privilege` is disabled, so direct GRANTs are the supported path.
 
 The result: an API published in Region A is live in Region B within seconds, and either region surviving an outage keeps serving traffic.
