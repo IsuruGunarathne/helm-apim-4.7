@@ -20,11 +20,11 @@ The GoldenGate Free container is colocated on the DC1 VM and runs both Extract a
 │  │   Sequences 1,3,5,7...   │◄─┼──Peering─┼──►  Sequences 2,4,6,8...   │  │
 │  │   DCID: DC1              │  │          │  │   DCID: DC2              │  │
 │  │                          │  │          │  │                          │  │
-│  │  ogg-hub container:      │  │          │  │  IP: 10.1.4.4            │  │
+│  │  ogg-hub container:      │  │          │  │  IP: 10.6.0.13            │  │
 │  │   Active-Active pipelines│  │          │  └─────────────────────────┘  │
 │  │   (apim-db, shared-db)   │  │          │                               │
 │  │                          │  │          │                               │
-│  │ IP: 10.2.4.4             │  │          │                               │
+│  │ IP: 10.6.0.12             │  │          │                               │
 │  └─────────────────────────┘  │          │                               │
 │                               │          │                               │
 │  Jump-box VM (x.x.1.0/24)     │          │  Jump-box VM (x.x.1.0/24)     │
@@ -42,19 +42,19 @@ The GoldenGate Free container is colocated on the DC1 VM and runs both Extract a
 
 ```bash
 # DC1 — East US 1 (Oracle DB + OGG on the same VM)
-export DC1_HOST=10.2.4.4
+export DC1_HOST=10.6.0.12
 export DC1_PORT=1521
 export DC1_USER=apimadmin
 export DC1_PASS="Apim@123"
 
 # DC2 — West US 2 (Oracle DB only)
-export DC2_HOST=10.1.4.4
+export DC2_HOST=10.6.0.13
 export DC2_PORT=1521
 export DC2_USER=apimadmin
 export DC2_PASS="Apim@123"
 
 # GoldenGate Free web UI (served from the ogg-hub container on the DC1 VM)
-export OGG_HOST=10.2.4.4
+export OGG_HOST=10.6.0.12
 export OGG_UI_PORT=9011   # insecure mode — see §5.1
 ```
 
@@ -400,7 +400,7 @@ On each VM, clone the repo and copy the correct per-DC pack into its DB containe
 
 ```bash
 cd ~
-git clone <this-repo-url> helm-apim-4.7
+git clone https://github.com/IsuruGunarathne/helm-apim-4.7 helm-apim-4.7
 cd helm-apim-4.7
 
 # apim_db scripts
@@ -416,6 +416,11 @@ docker exec -i oracle-db sqlplus 'apimadmin/"Apim@123"@localhost:1521/apim_db'  
 docker exec -i oracle-db sqlplus 'apimadmin/"Apim@123"@localhost:1521/apim_db'   @/tmp/apim_sequences.sql
 docker exec -i oracle-db sqlplus 'apimadmin/"Apim@123"@localhost:1521/shared_db' @/tmp/shared_tables.sql
 docker exec -i oracle-db sqlplus 'apimadmin/"Apim@123"@localhost:1521/shared_db' @/tmp/shared_sequences.sql
+
+docker exec -i oracle-db sqlplus 'apimadmin/"Apim@123"@localhost:1521/apim_db'   @/tmp/tables_23c.sql
+docker exec -i oracle-db sqlplus 'apimadmin/"Apim@123"@localhost:1521/apim_db'   @/tmp/sequences_23c.sql
+docker exec -i oracle-db sqlplus 'apimadmin/"Apim@123"@localhost:1521/shared_db' @/tmp/tables_23c.sql
+docker exec -i oracle-db sqlplus 'apimadmin/"Apim@123"@localhost:1521/shared_db' @/tmp/sequences_23c.sql
 ```
 
 **DC2 VM:** same commands, but replace `dc1/Oracle` with `dc2/Oracle` in all four `docker cp` lines.
@@ -462,15 +467,15 @@ EXIT;
 From the **DC1** VM, confirm it can reach the DC2 DB over the peered VNet (OGG on DC1 will need this):
 
 ```bash
-nc -zv 10.1.4.4 1521
-# expect: Connection to 10.1.4.4 1521 port [tcp/*] succeeded!
+nc -zv 10.6.0.13 1521
+# expect: Connection to 10.6.0.13 1521 port [tcp/*] succeeded!
 ```
 
 And from the **DC2** VM, confirm reachability back:
 
 ```bash
-nc -zv 10.2.4.4 1521
-# expect: Connection to 10.2.4.4 1521 port [tcp/*] succeeded!
+nc -zv 10.6.0.12 1521
+# expect: Connection to 10.6.0.12 1521 port [tcp/*] succeeded!
 ```
 
 If either `nc` call fails, re-check the NSG rules in §1.2 and the VNet peering in §1.3 before continuing.
@@ -609,13 +614,13 @@ To avoid re-tunneling mid-session, forward the full range up front:
 
 ```bash
 # From your laptop
-ssh -i ./keys/apim-4-7-eus1-oracle_key_0410.pem \
+ssh -i oracle1_key.pem \
   -L 8011:localhost:9011 \
   -L 9012:localhost:9012 \
   -L 9013:localhost:9013 \
   -L 9014:localhost:9014 \
   -L 9015:localhost:9015 \
-  azureuser@<DC1-public-ip>
+  azureuser@20.83.180.176
 ```
 
 **If the DC1 VM has no public IP** (jump-box hop, which is what `az vm create --public-ip-address ""` in §1.1 leaves you with):
@@ -623,11 +628,11 @@ ssh -i ./keys/apim-4-7-eus1-oracle_key_0410.pem \
 ```bash
 # From your laptop
 ssh \
-  -L 8011:10.2.4.4:9011 \
-  -L 9012:10.2.4.4:9012 \
-  -L 9013:10.2.4.4:9013 \
-  -L 9014:10.2.4.4:9014 \
-  -L 9015:10.2.4.4:9015 \
+  -L 8011:10.6.0.12:9011 \
+  -L 9012:10.6.0.12:9012 \
+  -L 9013:10.6.0.12:9013 \
+  -L 9014:10.6.0.12:9014 \
+  -L 9015:10.6.0.12:9015 \
   azureuser@<jump-box-public-ip>
 ```
 
@@ -666,10 +671,10 @@ The 23.26 form has **no separate Hostname / Port / Service Name fields and no SY
 
 | Connection name | User ID (Easy Connect)                  | Password    |
 |-----------------|-----------------------------------------|-------------|
-| `dc1_apim`      | `apimadmin@//10.2.4.4:1521/apim_db`     | `Apim@123`  |
-| `dc1_shared`    | `apimadmin@//10.2.4.4:1521/shared_db`   | `Apim@123`  |
-| `dc2_apim`      | `apimadmin@//10.1.4.4:1521/apim_db`     | `Apim@123`  |
-| `dc2_shared`    | `apimadmin@//10.1.4.4:1521/shared_db`   | `Apim@123`  |
+| `dc1_apim`      | `apimadmin@//10.6.0.12:1521/apim_db`     | `Apim@123`  |
+| `dc1_shared`    | `apimadmin@//10.6.0.12:1521/shared_db`   | `Apim@123`  |
+| `dc2_apim`      | `apimadmin@//10.6.0.13:1521/apim_db`     | `Apim@123`  |
+| `dc2_shared`    | `apimadmin@//10.6.0.13:1521/shared_db`   | `Apim@123`  |
 
 After saving all four, hover over each row and click the **Test** (plug) icon in the Actions column. A green "Connection successful" on all four is your proof that VNet peering, NSG rules, and the Oracle listener are all healthy. If any row fails, fix it before moving on — a broken credential at Extract-creation time produces confusing downstream errors.
 
@@ -701,10 +706,10 @@ Same wizard as §6.1, just with user and alias swapped:
 
 | Connection name   | User ID (Easy Connect)                  | Password    |
 |-------------------|-----------------------------------------|-------------|
-| `dc1_apim_gg`     | `ggadmin@//10.2.4.4:1521/apim_db`       | `Apim@123`  |
-| `dc1_shared_gg`   | `ggadmin@//10.2.4.4:1521/shared_db`     | `Apim@123`  |
-| `dc2_apim_gg`     | `ggadmin@//10.1.4.4:1521/apim_db`       | `Apim@123`  |
-| `dc2_shared_gg`   | `ggadmin@//10.1.4.4:1521/shared_db`     | `Apim@123`  |
+| `dc1_apim_gg`     | `ggadmin@//10.6.0.12:1521/apim_db`       | `Apim@123`  |
+| `dc1_shared_gg`   | `ggadmin@//10.6.0.12:1521/shared_db`     | `Apim@123`  |
+| `dc2_apim_gg`     | `ggadmin@//10.6.0.13:1521/apim_db`       | `Apim@123`  |
+| `dc2_shared_gg`   | `ggadmin@//10.6.0.13:1521/shared_db`     | `Apim@123`  |
 
 Click **Test** on each. A red "invalid credentials" here means you either skipped §4.6 on one of the two DCs, or used a different password when creating `ggadmin` on one side — fix before continuing.
 
